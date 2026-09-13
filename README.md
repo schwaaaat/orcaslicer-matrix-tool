@@ -16,7 +16,8 @@ The generated manifest and G-code files are directly consumed by the native 3D m
 - **Configurable Auto-Approval Threshold**: Automatically skips approval and proceeds seamlessly if total estimated slicing time is under a configurable threshold (default: 30s, configurable via `--auto-confirm-under <seconds>` or in the GUI). Can also be completely bypassed via non-interactive mode (`--yes` in CLI or unchecking "Require approval" in GUI).
 - **Guaranteed Config Snapshot & Safe Restoration**: Snapshots the baseline state of all targeted settings via `GET /api/v1/config`. Applies variants individually, resetting to baseline between slices to prevent permutation stacking, and guarantees exact restoration of the original plater configuration in a `try...finally` block under all circumstances (completion, variant error, or Ctrl+C).
 - **Cost Calculation**: Accurately extracts `filament_cost` ($/kg) from the active filament preset and calculates `cost_usd = filament_g * filament_cost / 1000.0`.
-- **Compare Viewer Integration**: Supports `--launch-viewer` / `--viewer-path` to automatically launch OrcaSlicer in compare mode after slicing finishes.
+- **Results & Analytics Dashboard**: Built-in interactive dashboard featuring Summary & Deltas comparison tables, G-code filament by line-type breakdown (inner/outer walls, infill, supports), visual bar/radar charts, and an automated recommendation banner.
+- **Selective Compare Viewer Integration**: Auto-detects or lets you browse to your `orca-slicer.exe` executable. Launch the full comparison or select a subset of variants (via Ctrl+Click in tables or the checklist dialog) to inspect 2, 3, or more specific variants side-by-side.
 
 ---
 
