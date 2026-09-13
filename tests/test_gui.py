@@ -274,6 +274,42 @@ class TestOrcaMatrixApp(unittest.TestCase):
         items_pareto = self.app.charts_canvas.find_all()
         self.assertGreater(len(items_pareto), 0)
 
+        # Test 3D lattice mode
+        self.app.chart_type_var.set("3d_lattice")
+        self.app._redraw_charts()
+        items_3d = self.app.charts_canvas.find_all()
+        self.assertGreater(len(items_3d), 0)
+
+        # Verify mouse rotation drag on 3D canvas
+        init_yaw = self.app._rot_yaw
+        init_pitch = self.app._rot_pitch
+        ev_press = MockEvent()
+        ev_press.x = 200
+        ev_press.y = 200
+        self.app._on_chart_press(ev_press)
+        self.assertTrue(self.app._is_dragging_3d)
+
+        ev_drag = MockEvent()
+        ev_drag.x = 230
+        ev_drag.y = 180
+        self.app._on_chart_drag(ev_drag)
+        self.assertNotEqual(self.app._rot_yaw, init_yaw)
+        self.assertNotEqual(self.app._rot_pitch, init_pitch)
+
+        ev_release = MockEvent()
+        self.app._on_chart_release(ev_release)
+        self.assertFalse(self.app._is_dragging_3d)
+
+        # Test 3D hover tracking
+        hover_nodes = [item for item in self.app._chart_hover_items if item.get("type") == "3d_node"]
+        self.assertGreater(len(hover_nodes), 0)
+        target_node = hover_nodes[0]
+        ev_node_hover = MockEvent()
+        ev_node_hover.x = int(target_node["cx"])
+        ev_node_hover.y = int(target_node["cy"])
+        self.app._on_chart_motion(ev_node_hover)
+        self.assertIn("3D Node", self.app.chart_hover_lbl.cget("text"))
+
         # Test leave event
         self.app._on_chart_leave(MockEvent())
         self.assertIn("Hover over", self.app.chart_hover_lbl.cget("text"))

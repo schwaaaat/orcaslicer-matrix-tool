@@ -8,6 +8,7 @@ permutation counts, run matrix slices, and launch the compare viewer.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import threading
@@ -648,18 +649,29 @@ class OrcaMatrixApp(tk.Tk):
         chart_controls_row = ttk.Frame(self.tab_charts)
         chart_controls_row.pack(fill="x", pady=(0, 4))
         self.chart_type_var = tk.StringVar(value="stacked")
-        ttk.Radiobutton(chart_controls_row, text="Filament Breakdown (Stacked)", variable=self.chart_type_var, value="stacked", command=self._redraw_charts).pack(side="left", padx=(0, 8))
-        ttk.Radiobutton(chart_controls_row, text="Pareto Frontier (Time vs Material)", variable=self.chart_type_var, value="pareto", command=self._redraw_charts).pack(side="left")
+        ttk.Radiobutton(chart_controls_row, text="Filament Breakdown", variable=self.chart_type_var, value="stacked", command=self._redraw_charts).pack(side="left", padx=(0, 6))
+        ttk.Radiobutton(chart_controls_row, text="Pareto Frontier", variable=self.chart_type_var, value="pareto", command=self._redraw_charts).pack(side="left", padx=(0, 6))
+        self.chart_3d_radio = ttk.Radiobutton(chart_controls_row, text="3D Matrix Lattice", variable=self.chart_type_var, value="3d_lattice", command=self._redraw_charts)
+        self.chart_3d_radio.pack(side="left")
 
         self.compact_labels_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(chart_controls_row, text="Compact Labels", variable=self.compact_labels_var, command=self._redraw_charts).pack(side="right")
 
         self._chart_hover_items: List[Dict[str, Any]] = []
+        self._rot_pitch: float = 24.0
+        self._rot_yaw: float = -38.0
+        self._drag_start_x: int = 0
+        self._drag_start_y: int = 0
+        self._is_dragging_3d: bool = False
+
         self.charts_canvas = tk.Canvas(self.tab_charts, height=230, background="#1e293b", highlightthickness=0)
         self.charts_canvas.pack(fill="both", expand=True)
         self.charts_canvas.bind("<Configure>", lambda e: self._redraw_charts())
         self.charts_canvas.bind("<Motion>", self._on_chart_motion)
         self.charts_canvas.bind("<Leave>", self._on_chart_leave)
+        self.charts_canvas.bind("<ButtonPress-1>", self._on_chart_press)
+        self.charts_canvas.bind("<B1-Motion>", self._on_chart_drag)
+        self.charts_canvas.bind("<ButtonRelease-1>", self._on_chart_release)
 
         self.chart_hover_lbl = ttk.Label(
             self.tab_charts,
@@ -1270,8 +1282,10 @@ class OrcaMatrixApp(tk.Tk):
         mode = self.chart_type_var.get()
         if mode == "stacked":
             self._draw_stacked_bar_chart()
-        else:
+        elif mode == "pareto":
             self._draw_pareto_chart()
+        elif mode == "3d_lattice":
+            self._draw_3d_lattice_chart()
 
     def _draw_stacked_bar_chart(self) -> None:
         """Render horizontal stacked bars on Tkinter canvas for filament breakdown."""
@@ -1551,6 +1565,278 @@ class OrcaMatrixApp(tk.Tk):
                 "data": p,
             })
 
+    def _draw_3d_lattice_chart(self) -> None:
+        """Render an interactive, rotatable 3D wireframe lattice representing the multi-axis matrix."""
+        if self._is_destroyed or not self.charts_canvas.winfo_exists():
+            return
+
+        self.charts_canvas.delete("all")
+        self._chart_hover_items = []
+        w = self.charts_canvas.winfo_width() or 520
+        h = self.charts_canvas.winfo_height() or 230
+
+        if not hasattr(self, "_last_comparison") or not self._last_comparison:
+            self.charts_canvas.create_text(
+                w / 2,
+                h / 2,
+                text="Slice matrix variants to render the 3D lattice.",
+                fill="#94a3b8",
+                font=("Segoe UI", 9, "italic"),
+            )
+            return
+
+        summary_rows = self._last_comparison.get("summary_rows", [])
+        if not summary_rows:
+            return
+
+        # 1. Discover active axes and values
+        axis_values_map: Dict[str, List[str]] = {}
+        for r in summary_rows:
+            ch = r.get("changes") or {}
+            if not ch:
+                for part in r["name"].split(","):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        ch[k.strip()] = v.strip()
+            for k, v in ch.items():
+                if k not in axis_values_map:
+                    axis_values_map[k] = []
+                if v not in axis_values_map[k]:
+                    axis_values_map[k].append(v)
+
+        axis_keys = list(axis_values_map.keys())
+        has_true_3d = len(axis_keys) >= 3
+
+        axis_x_name = axis_keys[0] if len(axis_keys) > 0 else "Dimension A"
+        axis_y_name = axis_keys[1] if len(axis_keys) > 1 else ("Filament Mass" if not has_true_3d else "Dimension B")
+        axis_z_name = axis_keys[2] if len(axis_keys) > 2 else "Print Time"
+
+        cx = w / 2
+        cy = h / 2 + 6
+        scale = min(w * 0.40, h * 0.42)
+
+        # 2. Rotation Matrix setup
+        rad_pitch = math.radians(self._rot_pitch)
+        rad_yaw = math.radians(self._rot_yaw)
+        cos_y, sin_y = math.cos(rad_yaw), math.sin(rad_yaw)
+        cos_p, sin_p = math.cos(rad_pitch), math.sin(rad_pitch)
+
+        def project_3d(x: float, y: float, z: float) -> Tuple[float, float, float]:
+            """Project 3D point (x, y, z) in [-1, 1] to 2D (sx, sy, depth)."""
+            rx = x * cos_y - y * sin_y
+            ry = x * sin_y + y * cos_y
+            rz = z
+            x2 = rx
+            y2 = ry * cos_p - rz * sin_p
+            z2 = ry * sin_p + rz * cos_p
+            sx = cx + x2 * scale
+            sy = cy - z2 * scale
+            return sx, sy, y2
+
+        # 3. Bounding Box & Wireframe Grid
+        c_min, c_max = -0.85, 0.85
+        corners = [
+            (c_min, c_min, c_min), (c_max, c_min, c_min), (c_max, c_max, c_min), (c_min, c_max, c_min),
+            (c_min, c_min, c_max), (c_max, c_min, c_max), (c_max, c_max, c_max), (c_min, c_max, c_max),
+        ]
+        box_edges = [
+            (0, 1), (1, 2), (2, 3), (3, 0),
+            (4, 5), (5, 6), (6, 7), (7, 4),
+            (0, 4), (1, 5), (2, 6), (3, 7),
+        ]
+        for e1, e2 in box_edges:
+            sx1, sy1, _ = project_3d(*corners[e1])
+            sx2, sy2, _ = project_3d(*corners[e2])
+            self.charts_canvas.create_line(sx1, sy1, sx2, sy2, fill="#334155", dash=(2, 3), width=1)
+
+        # 4. 3D Coordinate Rays & Arrows from origin (-0.85, -0.85, -0.85)
+        ox, oy, oz = c_min, c_min, c_min
+        s_ox, s_oy, _ = project_3d(ox, oy, oz)
+
+        # Axis X ray (Coral)
+        s_xx, s_xy, _ = project_3d(1.15, oy, oz)
+        self.charts_canvas.create_line(s_ox, s_oy, s_xx, s_xy, fill="#f43f5e", width=2, arrow="last")
+        label_x = format_compact_label(f"{axis_x_name}=X").replace("=X", "").replace(":X", "") or axis_x_name[:12]
+        self.charts_canvas.create_text(s_xx + 4, s_xy, text=f"[X] {label_x}", fill="#f43f5e", font=("Segoe UI", 8, "bold"), anchor="w")
+
+        # Axis Y ray (Emerald)
+        s_yx, s_yy, _ = project_3d(ox, 1.15, oz)
+        self.charts_canvas.create_line(s_ox, s_oy, s_yx, s_yy, fill="#10b981", width=2, arrow="last")
+        label_y = format_compact_label(f"{axis_y_name}=Y").replace("=Y", "").replace(":Y", "") or axis_y_name[:12]
+        self.charts_canvas.create_text(s_yx, s_yy - 6, text=f"[Y] {label_y}", fill="#10b981", font=("Segoe UI", 8, "bold"), anchor="s")
+
+        # Axis Z ray (Sky Blue)
+        s_zx, s_zy, _ = project_3d(ox, oy, 1.15)
+        self.charts_canvas.create_line(s_ox, s_oy, s_zx, s_zy, fill="#38bdf8", width=2, arrow="last")
+        label_z = format_compact_label(f"{axis_z_name}=Z").replace("=Z", "").replace(":Z", "") or axis_z_name[:12]
+        self.charts_canvas.create_text(s_zx, s_zy - 6, text=f"[Z] {label_z}", fill="#38bdf8", font=("Segoe UI", 8, "bold"), anchor="s")
+
+        # 5. Map Variants to 3D Coordinates
+        node_render_list = []
+        all_times = [r["time_s"] for r in summary_rows if r.get("time_s")]
+        all_masses = [r["filament_g"] for r in summary_rows if r.get("filament_g")]
+        min_t, max_t = (min(all_times), max(all_times)) if all_times else (1, 100)
+        min_m, max_m = (min(all_masses), max(all_masses)) if all_masses else (1, 100)
+
+        for r in summary_rows:
+            ch = r.get("changes") or {}
+            if not ch:
+                for part in r["name"].split(","):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        ch[k.strip()] = v.strip()
+
+            # Normalized X
+            if axis_x_name in ch and axis_x_name in axis_values_map and len(axis_values_map[axis_x_name]) > 1:
+                vx = ch[axis_x_name]
+                idx_x = axis_values_map[axis_x_name].index(vx) if vx in axis_values_map[axis_x_name] else 0
+                nx = c_min + (1.7 * idx_x / max(1, len(axis_values_map[axis_x_name]) - 1))
+            else:
+                nx = 0.0
+
+            # Normalized Y
+            if has_true_3d:
+                if axis_y_name in ch and axis_y_name in axis_values_map and len(axis_values_map[axis_y_name]) > 1:
+                    vy = ch[axis_y_name]
+                    idx_y = axis_values_map[axis_y_name].index(vy) if vy in axis_values_map[axis_y_name] else 0
+                    ny = c_min + (1.7 * idx_y / max(1, len(axis_values_map[axis_y_name]) - 1))
+                else:
+                    ny = 0.0
+            elif len(axis_keys) > 1 and axis_y_name in ch and axis_y_name in axis_values_map and len(axis_values_map[axis_y_name]) > 1:
+                vy = ch[axis_y_name]
+                idx_y = axis_values_map[axis_y_name].index(vy) if vy in axis_values_map[axis_y_name] else 0
+                ny = c_min + (1.7 * idx_y / max(1, len(axis_values_map[axis_y_name]) - 1))
+            else:
+                fil_g = r.get("filament_g") or min_m
+                ny = c_min + (1.7 * (fil_g - min_m) / max(0.01, max_m - min_m))
+
+            # Normalized Z
+            if has_true_3d:
+                if axis_z_name in ch and axis_z_name in axis_values_map and len(axis_values_map[axis_z_name]) > 1:
+                    vz = ch[axis_z_name]
+                    idx_z = axis_values_map[axis_z_name].index(vz) if vz in axis_values_map[axis_z_name] else 0
+                    nz = c_min + (1.7 * idx_z / max(1, len(axis_values_map[axis_z_name]) - 1))
+                else:
+                    nz = 0.0
+            else:
+                time_val = r.get("time_s") or min_t
+                nz = c_min + (1.7 * (time_val - min_t) / max(0.01, max_t - min_t))
+
+            sx, sy, depth = project_3d(nx, ny, nz)
+            node_render_list.append({
+                "sx": sx,
+                "sy": sy,
+                "depth": depth,
+                "nx": nx, "ny": ny, "nz": nz,
+                "variant": r,
+            })
+
+        # 6. Painter's Algorithm: Sort nodes by depth ascending (furthest first)
+        node_render_list.sort(key=lambda item: item["depth"])
+
+        # 7. Render 3D Nodes with Depth Shading and Specular Lighting
+        compact = self.compact_labels_var.get() if hasattr(self, "compact_labels_var") else True
+
+        for item in node_render_list:
+            sx, sy = item["sx"], item["sy"]
+            depth = item["depth"]
+            v = item["variant"]
+
+            is_base = v.get("is_baseline", False)
+            is_fast = v.get("is_fastest", False)
+            is_rec = v.get("is_recommended", False)
+
+            if is_rec:
+                col = "#10b981"      # Emerald (Recommended)
+            elif is_fast:
+                col = "#fbbf24"      # Gold (Fastest)
+            elif is_base:
+                col = "#3b82f6"      # Blue (Baseline)
+            else:
+                col = "#38bdf8"      # Cyan (Other)
+
+            r_size = max(5, int(6.5 + (depth + 1.2) * 2.0))
+
+            # Sphere body
+            self.charts_canvas.create_oval(
+                sx - r_size, sy - r_size, sx + r_size, sy + r_size,
+                fill=col,
+                outline="#0f172a",
+                width=1.5,
+            )
+
+            # Specular highlight dot
+            hl_r = max(1.5, r_size * 0.35)
+            self.charts_canvas.create_oval(
+                sx - r_size * 0.4 - hl_r, sy - r_size * 0.4 - hl_r,
+                sx - r_size * 0.4 + hl_r, sy - r_size * 0.4 + hl_r,
+                fill="#ffffff",
+                outline="",
+            )
+
+            # Variant label
+            lbl = format_compact_label(v["name"]) if compact else v["name"]
+            if is_rec:
+                lbl += " ★ rec"
+            elif is_fast:
+                lbl += " ★"
+            elif is_base:
+                lbl += " (base)"
+
+            if not compact and len(lbl) > 16:
+                lbl = lbl[:14] + ".."
+
+            self.charts_canvas.create_text(
+                sx + r_size + 4,
+                sy - 2,
+                text=lbl,
+                fill="#f8fafc",
+                font=("Segoe UI", 7, "bold"),
+                anchor="w",
+            )
+
+            # Hitbox for interactive hover
+            self._chart_hover_items.append({
+                "type": "3d_node",
+                "cx": sx,
+                "cy": sy,
+                "radius": r_size + 5,
+                "data": v,
+            })
+
+        # 8. Top-Left Overlay Hint
+        sub_title = "3-Axis Matrix Lattice" if has_true_3d else "3D Response Grid"
+        self.charts_canvas.create_text(
+            12, 12,
+            text=f"↺ {sub_title} (Click & drag to rotate • Yaw: {int(self._rot_yaw)}° Pitch: {int(self._rot_pitch)}°)",
+            fill="#94a3b8",
+            font=("Segoe UI", 8, "italic"),
+            anchor="nw",
+        )
+
+    def _on_chart_press(self, event: Any) -> None:
+        """Handle mouse click on canvas for 3D rotation."""
+        if self.chart_type_var.get() == "3d_lattice":
+            self._drag_start_x = event.x
+            self._drag_start_y = event.y
+            self._is_dragging_3d = True
+
+    def _on_chart_drag(self, event: Any) -> None:
+        """Handle mouse drag on canvas to smoothly rotate the 3D matrix."""
+        if self.chart_type_var.get() == "3d_lattice" and self._is_dragging_3d:
+            dx = event.x - self._drag_start_x
+            dy = event.y - self._drag_start_y
+            self._drag_start_x = event.x
+            self._drag_start_y = event.y
+
+            self._rot_yaw += dx * 0.8
+            self._rot_pitch = max(-80.0, min(80.0, self._rot_pitch - dy * 0.8))
+            self._draw_3d_lattice_chart()
+
+    def _on_chart_release(self, event: Any) -> None:
+        """Handle mouse release after 3D rotation."""
+        self._is_dragging_3d = False
+
     def _on_chart_motion(self, event: Any) -> None:
         """Update hover detail label when mouse moves over chart elements."""
         if not hasattr(self, "_chart_hover_items") or not self._chart_hover_items:
@@ -1576,6 +1862,27 @@ class OrcaMatrixApp(tk.Tk):
                         return
             self.chart_hover_lbl.config(
                 text="Hover over any bar segment or chart point to inspect detailed metrics.",
+                foreground="#94a3b8",
+            )
+        elif mode == "3d_lattice":
+            for item in self._chart_hover_items:
+                if item["type"] == "3d_node":
+                    dist_sq = (mx - item["cx"]) ** 2 + (my - item["cy"]) ** 2
+                    if dist_sq <= item["radius"] ** 2:
+                        p = item["data"]
+                        name = p.get("name", "")
+                        compact_n = format_compact_label(name)
+                        t_str = p.get("print_time", "-")
+                        f_str = p.get("filament", "-")
+                        c_str = p.get("cost", "-")
+                        vs_b = p.get("vs_baseline", "-")
+                        self.chart_hover_lbl.config(
+                            text=f"🧊 3D Node: {compact_n} ({name})  •  Time: {t_str}  •  Filament: {f_str}  •  Cost: {c_str}  •  vs Base: {vs_b}",
+                            foreground="#38bdf8",
+                        )
+                        return
+            self.chart_hover_lbl.config(
+                text="Click & drag to rotate 3D matrix lattice. Hover over any 3D node for details.",
                 foreground="#94a3b8",
             )
         else:

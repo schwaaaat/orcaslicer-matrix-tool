@@ -358,6 +358,7 @@ def compute_matrix_comparison(
             "warnings_count": len(v.get("warnings") or []),
             "error": err,
             "filament_by_role": stats.get("filament_by_role") or {},
+            "changes": v.get("changes") or {},
         }
         summary_rows.append(row)
 
@@ -462,6 +463,9 @@ def generate_html_report(
 
     # Generate SVG Stacked Bar Chart
     svg_stacked_bars = _generate_stacked_bars_svg(lt_rows, columns)
+
+    # Generate 3D Matrix Lattice SVG
+    svg_3d_lattice = _generate_3d_lattice_svg(summary_rows, manifest_data.get("matrix", {}))
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -636,6 +640,16 @@ def generate_html_report(
     <div class="card-title">Filament Extrusion Breakdown by Role</div>
     <div class="chart-box">
       {svg_stacked_bars}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">3D Matrix Lattice (3-Axis Settings Hypercube)</div>
+    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 10px;">
+      Isometric 3D projection of matrix dimensions and variants. Each sphere represents a unique parameter combination in 3-dimensional settings space.
+    </p>
+    <div class="chart-box" style="text-align: center;">
+      {svg_3d_lattice}
     </div>
   </div>
 
@@ -844,4 +858,198 @@ def _generate_stacked_bars_svg(
 
     svg += "</svg>"
     return svg
+
+
+def _generate_3d_lattice_svg(
+    summary_rows: List[Dict[str, Any]],
+    matrix_dict: Optional[Dict[str, List[str]]] = None,
+) -> str:
+    """Generate inline SVG for an isometric 3D wireframe lattice representing the multi-axis settings."""
+    if not summary_rows:
+        return "<p style='color:#94a3b8;'>No variants to plot in 3D.</p>"
+
+    # Discover axis names and values
+    axis_values_map: Dict[str, List[str]] = dict(matrix_dict or {})
+    if not axis_values_map:
+        for r in summary_rows:
+            ch = r.get("changes") or {}
+            if not ch:
+                for part in r["name"].split(","):
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                        ch[k.strip()] = v.strip()
+            for k, v in ch.items():
+                if k not in axis_values_map:
+                    axis_values_map[k] = []
+                if v not in axis_values_map[k]:
+                    axis_values_map[k].append(v)
+
+    axis_keys = list(axis_values_map.keys())
+    has_true_3d = len(axis_keys) >= 3
+
+    axis_x_name = axis_keys[0] if len(axis_keys) > 0 else "Dimension A"
+    axis_y_name = axis_keys[1] if len(axis_keys) > 1 else ("Filament Mass" if not has_true_3d else "Dimension B")
+    axis_z_name = axis_keys[2] if len(axis_keys) > 2 else "Print Time"
+
+    width, height = 760, 360
+    cx = width / 2
+    cy = height / 2 + 10
+    scale = 120.0
+
+    # Isometric rotation angles (24 deg pitch, -38 deg yaw)
+    rad_pitch = math.radians(24.0)
+    rad_yaw = math.radians(-38.0)
+    cos_y, sin_y = math.cos(rad_yaw), math.sin(rad_yaw)
+    cos_p, sin_p = math.cos(rad_pitch), math.sin(rad_pitch)
+
+    def project_3d(x: float, y: float, z: float) -> Tuple[float, float, float]:
+        rx = x * cos_y - y * sin_y
+        ry = x * sin_y + y * cos_y
+        rz = z
+        x2 = rx
+        y2 = ry * cos_p - rz * sin_p
+        z2 = ry * sin_p + rz * cos_p
+        sx = cx + x2 * scale
+        sy = cy - z2 * scale
+        return sx, sy, y2
+
+    c_min, c_max = -0.85, 0.85
+    corners = [
+        (c_min, c_min, c_min), (c_max, c_min, c_min), (c_max, c_max, c_min), (c_min, c_max, c_min),
+        (c_min, c_min, c_max), (c_max, c_min, c_max), (c_max, c_max, c_max), (c_min, c_max, c_max),
+    ]
+    box_edges = [
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    ]
+
+    svg = f"""<svg viewBox="0 0 {width} {height}" style="width: 100%; max-width: 800px; height: auto;">
+  <!-- 3D Bounding Box Wireframe -->
+"""
+    for e1, e2 in box_edges:
+        sx1, sy1, _ = project_3d(*corners[e1])
+        sx2, sy2, _ = project_3d(*corners[e2])
+        svg += f"""  <line x1="{sx1:.1f}" y1="{sy1:.1f}" x2="{sx2:.1f}" y2="{sy2:.1f}" stroke="#334155" stroke-width="1" stroke-dasharray="3,3"/>\n"""
+
+    # 3D Coordinate Rays
+    ox, oy, oz = c_min, c_min, c_min
+    s_ox, s_oy, _ = project_3d(ox, oy, oz)
+
+    s_xx, s_xy, _ = project_3d(1.15, oy, oz)
+    label_x = format_compact_label(f"{axis_x_name}=X").replace("=X", "").replace(":X", "") or axis_x_name[:12]
+    svg += f"""  <!-- X Axis -->
+  <line x1="{s_ox:.1f}" y1="{s_oy:.1f}" x2="{s_xx:.1f}" y2="{s_xy:.1f}" stroke="#f43f5e" stroke-width="2"/>
+  <text x="{s_xx + 6:.1f}" y="{s_xy + 4:.1f}" fill="#f43f5e" font-size="11" font-weight="700">[X] {label_x}</text>
+"""
+
+    s_yx, s_yy, _ = project_3d(ox, 1.15, oz)
+    label_y = format_compact_label(f"{axis_y_name}=Y").replace("=Y", "").replace(":Y", "") or axis_y_name[:12]
+    svg += f"""  <!-- Y Axis -->
+  <line x1="{s_ox:.1f}" y1="{s_oy:.1f}" x2="{s_yx:.1f}" y2="{s_yy:.1f}" stroke="#10b981" stroke-width="2"/>
+  <text x="{s_yx:.1f}" y="{s_yy - 8:.1f}" fill="#10b981" font-size="11" font-weight="700" text-anchor="middle">[Y] {label_y}</text>
+"""
+
+    s_zx, s_zy, _ = project_3d(ox, oy, 1.15)
+    label_z = format_compact_label(f"{axis_z_name}=Z").replace("=Z", "").replace(":Z", "") or axis_z_name[:12]
+    svg += f"""  <!-- Z Axis -->
+  <line x1="{s_ox:.1f}" y1="{s_oy:.1f}" x2="{s_zx:.1f}" y2="{s_zy:.1f}" stroke="#38bdf8" stroke-width="2"/>
+  <text x="{s_zx:.1f}" y="{s_zy - 8:.1f}" fill="#38bdf8" font-size="11" font-weight="700" text-anchor="middle">[Z] {label_z}</text>
+"""
+
+    # Map variants
+    nodes = []
+    all_times = [r["time_s"] for r in summary_rows if r.get("time_s")]
+    all_masses = [r["filament_g"] for r in summary_rows if r.get("filament_g")]
+    min_t, max_t = (min(all_times), max(all_times)) if all_times else (1, 100)
+    min_m, max_m = (min(all_masses), max(all_masses)) if all_masses else (1, 100)
+
+    for r in summary_rows:
+        ch = r.get("changes") or {}
+        if not ch:
+            for part in r["name"].split(","):
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    ch[k.strip()] = v.strip()
+
+        if axis_x_name in ch and axis_x_name in axis_values_map and len(axis_values_map[axis_x_name]) > 1:
+            vx = ch[axis_x_name]
+            idx_x = axis_values_map[axis_x_name].index(vx) if vx in axis_values_map[axis_x_name] else 0
+            nx = c_min + (1.7 * idx_x / max(1, len(axis_values_map[axis_x_name]) - 1))
+        else:
+            nx = 0.0
+
+        if has_true_3d:
+            if axis_y_name in ch and axis_y_name in axis_values_map and len(axis_values_map[axis_y_name]) > 1:
+                vy = ch[axis_y_name]
+                idx_y = axis_values_map[axis_y_name].index(vy) if vy in axis_values_map[axis_y_name] else 0
+                ny = c_min + (1.7 * idx_y / max(1, len(axis_values_map[axis_y_name]) - 1))
+            else:
+                ny = 0.0
+        elif len(axis_keys) > 1 and axis_y_name in ch and axis_y_name in axis_values_map and len(axis_values_map[axis_y_name]) > 1:
+            vy = ch[axis_y_name]
+            idx_y = axis_values_map[axis_y_name].index(vy) if vy in axis_values_map[axis_y_name] else 0
+            ny = c_min + (1.7 * idx_y / max(1, len(axis_values_map[axis_y_name]) - 1))
+        else:
+            fil_g = r.get("filament_g") or min_m
+            ny = c_min + (1.7 * (fil_g - min_m) / max(0.01, max_m - min_m))
+
+        if has_true_3d:
+            if axis_z_name in ch and axis_z_name in axis_values_map and len(axis_values_map[axis_z_name]) > 1:
+                vz = ch[axis_z_name]
+                idx_z = axis_values_map[axis_z_name].index(vz) if vz in axis_values_map[axis_z_name] else 0
+                nz = c_min + (1.7 * idx_z / max(1, len(axis_values_map[axis_z_name]) - 1))
+            else:
+                nz = 0.0
+        else:
+            time_val = r.get("time_s") or min_t
+            nz = c_min + (1.7 * (time_val - min_t) / max(0.01, max_t - min_t))
+
+        sx, sy, depth = project_3d(nx, ny, nz)
+        nodes.append({"sx": sx, "sy": sy, "depth": depth, "variant": r})
+
+    # Sort depth ascending
+    nodes.sort(key=lambda item: item["depth"])
+
+    for item in nodes:
+        sx, sy = item["sx"], item["sy"]
+        v = item["variant"]
+        depth = item["depth"]
+
+        is_base = v.get("is_baseline", False)
+        is_fast = v.get("is_fastest", False)
+        is_rec = v.get("is_recommended", False)
+
+        if is_rec:
+            col = "#10b981"
+        elif is_fast:
+            col = "#fbbf24"
+        elif is_base:
+            col = "#3b82f6"
+        else:
+            col = "#38bdf8"
+
+        r_size = max(5, int(6.5 + (depth + 1.2) * 2.0))
+        lbl = format_compact_label(v["name"])
+        if is_rec:
+            lbl += " ★ rec"
+        elif is_fast:
+            lbl += " ★"
+        elif is_base:
+            lbl += " (base)"
+
+        tooltip = f"{v['name']}&#10;Time: {v.get('print_time', '-')}&#10;Filament: {v.get('filament', '-')}&#10;Cost: {v.get('cost', '-')}&#10;vs Base: {v.get('vs_baseline', '-')}"
+
+        svg += f"""  <g>
+    <circle cx="{sx:.1f}" cy="{sy:.1f}" r="{r_size}" fill="{col}" stroke="#0f172a" stroke-width="2">
+      <title>{tooltip}</title>
+    </circle>
+    <circle cx="{sx - r_size * 0.3:.1f}" cy="{sy - r_size * 0.3:.1f}" r="{r_size * 0.35:.1f}" fill="#ffffff" opacity="0.6"/>
+    <text x="{sx + r_size + 5:.1f}" y="{sy + 4:.1f}" fill="#f8fafc" font-size="10" font-weight="600">{lbl}</text>
+  </g>
+"""
+
+    svg += "</svg>"
+    return svg
+
 
