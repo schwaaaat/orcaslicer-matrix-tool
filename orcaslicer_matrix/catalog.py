@@ -29,8 +29,8 @@ class PresetValue:
     description: str = ""
 
     def display_name(self) -> str:
-        if self.label and self.label != self.value:
-            return f"{self.value} ({self.label})"
+        if self.label:
+            return self.label
         return self.value
 
 
@@ -87,38 +87,38 @@ CURATED_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "layer_height": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("0.08", "0.08mm - Ultra Fine"),
-            PresetValue("0.12", "0.12mm - Very Fine"),
-            PresetValue("0.16", "0.16mm - Fine"),
-            PresetValue("0.20", "0.20mm - Standard"),
-            PresetValue("0.24", "0.24mm - Fast"),
-            PresetValue("0.28", "0.28mm - Draft"),
-            PresetValue("0.32", "0.32mm - Coarse"),
+            PresetValue("0.08", "0.08 mm"),
+            PresetValue("0.12", "0.12 mm"),
+            PresetValue("0.16", "0.16 mm"),
+            PresetValue("0.20", "0.20 mm"),
+            PresetValue("0.24", "0.24 mm"),
+            PresetValue("0.28", "0.28 mm"),
+            PresetValue("0.32", "0.32 mm"),
         ],
     },
     "initial_layer_height": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("0.16", "0.16mm"),
-            PresetValue("0.20", "0.20mm - Standard"),
-            PresetValue("0.24", "0.24mm"),
-            PresetValue("0.28", "0.28mm - Thick"),
+            PresetValue("0.16", "0.16 mm"),
+            PresetValue("0.20", "0.20 mm"),
+            PresetValue("0.24", "0.24 mm"),
+            PresetValue("0.28", "0.28 mm"),
         ],
     },
     "wall_generator": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("classic", "Classic (Constant Width)"),
-            PresetValue("arachne", "Arachne (Variable Width)"),
+            PresetValue("classic", "Classic"),
+            PresetValue("arachne", "Arachne"),
         ],
     },
     "seam_position": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("aligned", "Aligned (Corners)"),
-            PresetValue("rear", "Rear (Back of plate)"),
-            PresetValue("nearest", "Nearest (Fastest)"),
-            PresetValue("random", "Random (Dispersed)"),
+            PresetValue("aligned", "Aligned"),
+            PresetValue("rear", "Rear"),
+            PresetValue("nearest", "Nearest"),
+            PresetValue("random", "Random"),
         ],
     },
     "precise_outer_wall": {
@@ -131,35 +131,35 @@ CURATED_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "elefant_foot_compensation": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("0.0", "0.0mm (Off)"),
-            PresetValue("0.10", "0.10mm"),
-            PresetValue("0.15", "0.15mm (Standard)"),
-            PresetValue("0.20", "0.20mm"),
-            PresetValue("0.25", "0.25mm"),
+            PresetValue("0.0", "0.0 mm (Off)"),
+            PresetValue("0.10", "0.10 mm"),
+            PresetValue("0.15", "0.15 mm"),
+            PresetValue("0.20", "0.20 mm"),
+            PresetValue("0.25", "0.25 mm"),
         ],
     },
     "ironing_type": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("no ironing", "Disabled"),
-            PresetValue("top", "Top surfaces only"),
-            PresetValue("topmost", "Topmost surface"),
-            PresetValue("solid", "All solid layers"),
+            PresetValue("no ironing", "No Ironing"),
+            PresetValue("top", "Top Surfaces"),
+            PresetValue("topmost", "Topmost Surface"),
+            PresetValue("solid", "All Solid Layers"),
         ],
     },
     "ironing_speed": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("15", "15 mm/s (High Gloss)"),
-            PresetValue("30", "30 mm/s (Standard)"),
-            PresetValue("50", "50 mm/s (Fast)"),
+            PresetValue("15", "15 mm/s"),
+            PresetValue("30", "30 mm/s"),
+            PresetValue("50", "50 mm/s"),
         ],
     },
     "ironing_flow": {
         "category": CAT_QUALITY,
         "presets": [
             PresetValue("10%", "10%"),
-            PresetValue("15%", "15% (Standard)"),
+            PresetValue("15%", "15%"),
             PresetValue("20%", "20%"),
             PresetValue("25%", "25%"),
         ],
@@ -169,12 +169,12 @@ CURATED_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "wall_loops": {
         "category": CAT_STRENGTH,
         "presets": [
-            PresetValue("1", "1 Wall (Ultra Light)"),
-            PresetValue("2", "2 Walls (Standard)"),
-            PresetValue("3", "3 Walls (Strong)"),
-            PresetValue("4", "4 Walls (Heavy Duty)"),
-            PresetValue("5", "5 Walls (Industrial)"),
-            PresetValue("6", "6 Walls (Solid)"),
+            PresetValue("1", "1 Wall"),
+            PresetValue("2", "2 Walls"),
+            PresetValue("3", "3 Walls"),
+            PresetValue("4", "4 Walls"),
+            PresetValue("5", "5 Walls"),
+            PresetValue("6", "6 Walls"),
         ],
     },
     "sparse_infill_density": {

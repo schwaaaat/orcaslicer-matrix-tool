@@ -1,8 +1,8 @@
-"""OrcaSlicer Matrix Tool - Modern Graphical User Interface.
+"""OrcaSlicer Matrix Tool - Modern Desktop Graphical User Interface.
 
-Provides an interactive GUI to configure up to 3 matrix dimensions, select curated
-or schema-wide settings, inspect real-time permutation counts, run matrix slices,
-and launch the compare viewer.
+Provides an interactive, modern GUI to configure up to 3 matrix dimensions,
+select from comprehensive OrcaSlicer Process Tab settings, inspect real-time
+permutation counts, run matrix slices, and launch the compare viewer.
 """
 
 from __future__ import annotations
@@ -51,66 +51,78 @@ class DimensionCard(ttk.Frame):
         on_change_callback: Any,
         on_remove_callback: Any,
     ):
-        super().__init__(master, padding="8", relief="solid", borderwidth=1)
+        super().__init__(master, padding="10", style="Card.TFrame")
         self.index = index
         self.catalog = catalog
         self.on_change_callback = on_change_callback
         self.on_remove_callback = on_remove_callback
 
         self.current_dim: Optional[DimensionDefinition] = None
+        self._current_key: Optional[str] = None
         self.selected_values: List[str] = []
+        self._category_dims: List[DimensionDefinition] = []
 
         self._build_ui()
 
     def _build_ui(self) -> None:
-        # Header: Dimension #X + Remove Button
-        header_frame = ttk.Frame(self)
-        header_frame.pack(fill="x", pady=(0, 4))
+        # Header Row: Dimension Badge + Remove Button
+        header_frame = ttk.Frame(self, style="CardHeader.TFrame")
+        header_frame.pack(fill="x", pady=(0, 6))
 
+        axis_letter = chr(65 + self.index)
         self.title_lbl = ttk.Label(
             header_frame,
-            text=f"Dimension #{self.index + 1} (Axis {chr(65 + self.index)})",
+            text=f"Dimension #{self.index + 1}  •  Axis {axis_letter}",
             font=("Segoe UI", 10, "bold"),
+            foreground="#1e293b",
         )
         self.title_lbl.pack(side="left")
+
+        self.summary_badge = ttk.Label(
+            header_frame,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#475569",
+        )
+        self.summary_badge.pack(side="left", padx=(10, 0))
 
         self.remove_btn = ttk.Button(
             header_frame,
             text="✕ Remove",
-            width=9,
+            width=10,
             command=lambda: self.on_remove_callback(self),
         )
         self.remove_btn.pack(side="right")
 
-        # Category & Search Filter Row
-        sel_row = ttk.Frame(self)
-        sel_row.pack(fill="x", pady=(2, 3))
+        # Category & Live Filter Row
+        cat_filter_row = ttk.Frame(self)
+        cat_filter_row.pack(fill="x", pady=(2, 4))
 
-        ttk.Label(sel_row, text="Process Tab:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        ttk.Label(cat_filter_row, text="Process Tab:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
         self.cat_var = tk.StringVar()
         categories = self.catalog.get_categories()
         self.cat_combo = ttk.Combobox(
-            sel_row,
+            cat_filter_row,
             textvariable=self.cat_var,
             values=categories,
             state="readonly",
-            width=24,
+            width=26,
         )
         self.cat_combo.set(categories[0] if categories else "")
-        self.cat_combo.pack(side="left", padx=(0, 8))
+        self.cat_combo.pack(side="left", padx=(0, 12))
         self.cat_combo.bind("<<ComboboxSelected>>", self._on_category_changed)
 
-        ttk.Label(sel_row, text="Filter:", font=("Segoe UI", 9)).pack(side="left", padx=(0, 2))
+        ttk.Label(cat_filter_row, text="🔍 Filter:", font=("Segoe UI", 9)).pack(side="left", padx=(0, 4))
         self.filter_var = tk.StringVar()
-        self.filter_entry = ttk.Entry(sel_row, textvariable=self.filter_var, width=15)
-        self.filter_entry.pack(side="left", padx=(0, 4))
+        self.filter_entry = ttk.Entry(cat_filter_row, textvariable=self.filter_var, width=18)
+        self.filter_entry.pack(side="left", fill="x", expand=True)
         self.filter_entry.bind("<KeyRelease>", self._on_filter_changed)
 
         # Setting Selector Row
         setting_row = ttk.Frame(self)
         setting_row.pack(fill="x", pady=(2, 4))
 
-        ttk.Label(setting_row, text="Setting:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
+        ttk.Label(setting_row, text="Setting:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
         self.dim_var = tk.StringVar()
         self.dim_combo = ttk.Combobox(
             setting_row,
@@ -120,43 +132,54 @@ class DimensionCard(ttk.Frame):
         self.dim_combo.pack(side="left", fill="x", expand=True)
         self.dim_combo.bind("<<ComboboxSelected>>", self._on_dimension_changed)
 
-        # Tooltip / Description Banner
-        self.desc_frame = ttk.Frame(self, padding="4")
-        self.desc_frame.pack(fill="x", pady=(2, 4))
+        # Setting Description / Tooltip Info Box
+        self.desc_frame = ttk.Frame(self, padding="6", relief="solid", borderwidth=1)
+        self.desc_frame.pack(fill="x", pady=(4, 6))
+
+        self.meta_lbl = ttk.Label(
+            self.desc_frame,
+            text="",
+            font=("Segoe UI", 8, "bold"),
+            foreground="#2563eb",
+        )
+        self.meta_lbl.pack(anchor="w")
+
         self.desc_lbl = ttk.Label(
             self.desc_frame,
             text="",
-            wraplength=700,
-            font=("Segoe UI", 8, "italic"),
-            foreground="#555555",
+            wraplength=620,
+            font=("Segoe UI", 8),
+            foreground="#334155",
         )
-        self.desc_lbl.pack(anchor="w")
+        self.desc_lbl.pack(anchor="w", pady=(2, 0))
 
         # Preset Quick-Add Chips Area
         self.presets_frame = ttk.Frame(self)
         self.presets_frame.pack(fill="x", pady=(2, 4))
+
         self.presets_title_lbl = ttk.Label(
             self.presets_frame,
-            text="Quick-Add Presets:",
+            text="Quick-Add Presets (click to toggle):",
             font=("Segoe UI", 8, "bold"),
-            foreground="#444444",
+            foreground="#475569",
         )
         self.presets_title_lbl.pack(anchor="w", pady=(0, 2))
+
         self.presets_chips_box = ttk.Frame(self.presets_frame)
         self.presets_chips_box.pack(fill="x")
 
         # Active Selected Values Display & Add Row
         val_action_row = ttk.Frame(self)
-        val_action_row.pack(fill="x", pady=(4, 2))
+        val_action_row.pack(fill="x", pady=(6, 2))
 
         ttk.Label(val_action_row, text="Active Values:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
 
         self.custom_val_var = tk.StringVar()
-        self.custom_val_entry = ttk.Entry(val_action_row, textvariable=self.custom_val_var, width=16)
+        self.custom_val_entry = ttk.Entry(val_action_row, textvariable=self.custom_val_var, width=18)
         self.custom_val_entry.pack(side="right", padx=(4, 0))
         self.custom_val_entry.bind("<Return>", lambda e: self._add_custom_value())
 
-        self.add_val_btn = ttk.Button(val_action_row, text="+ Add", width=6, command=self._add_custom_value)
+        self.add_val_btn = ttk.Button(val_action_row, text="+ Add Value", width=11, command=self._add_custom_value)
         self.add_val_btn.pack(side="right")
 
         self.values_container = ttk.Frame(self)
@@ -166,12 +189,13 @@ class DimensionCard(ttk.Frame):
         self._populate_dimensions_for_category()
 
     def _on_filter_changed(self, event: Any = None) -> None:
-        self._populate_dimensions_for_category()
+        self._populate_dimensions_for_category(preserve_selection=False)
 
     def _on_category_changed(self, event: Any = None) -> None:
-        self._populate_dimensions_for_category()
+        self.filter_var.set("")
+        self._populate_dimensions_for_category(preserve_selection=False)
 
-    def _populate_dimensions_for_category(self) -> None:
+    def _populate_dimensions_for_category(self, preserve_selection: bool = True) -> None:
         cat = self.cat_var.get()
         dims = self.catalog.get_dimensions_for_category(cat)
         q = self.filter_var.get().strip().lower()
@@ -180,32 +204,63 @@ class DimensionCard(ttk.Frame):
                 d for d in dims
                 if q in d.key.lower() or q in d.label.lower() or (d.tooltip and q in d.tooltip.lower())
             ]
+
         self._category_dims = dims
         display_names = [d.full_display_name for d in dims]
         self.dim_combo["values"] = display_names
+
         if display_names:
-            # If current selection not in list, pick first
-            self.dim_combo.current(0)
-            self._on_dimension_changed()
+            # Check if current selection is still valid in filtered list
+            current_key = self.current_dim.key if self.current_dim else None
+            match_idx = -1
+            if preserve_selection and current_key:
+                for idx, d in enumerate(dims):
+                    if d.key == current_key:
+                        match_idx = idx
+                        break
+
+            if match_idx >= 0:
+                self.dim_combo.current(match_idx)
+            else:
+                self.dim_combo.current(0)
+                self._on_dimension_changed()
         else:
             self.current_dim = None
+            self._current_key = None
             self.dim_var.set("(No settings match filter)")
+            self.meta_lbl.config(text="")
             self.desc_lbl.config(text="")
+            self.summary_badge.config(text="")
             self._refresh_presets_ui()
 
     def _on_dimension_changed(self, event: Any = None) -> None:
         idx = self.dim_combo.current()
         if 0 <= idx < len(self._category_dims):
             self.current_dim = self._category_dims[idx]
-            desc = self.current_dim.tooltip or "(No tooltip available)"
-            if self.current_dim.unit:
-                desc = f"[{self.current_dim.unit}] {desc}"
-            self.desc_lbl.config(text=desc)
+            new_key = self.current_dim.key
 
-            # Auto-populate first 2 presets if none selected yet
-            if not self.selected_values and self.current_dim.presets:
-                first_few = [p.value for p in self.current_dim.presets[:2]]
-                self.selected_values = list(dict.fromkeys(first_few))
+            # Update Metadata and Description text
+            meta_parts = [f"Key: {self.current_dim.key}", f"Type: {self.current_dim.type}"]
+            if self.current_dim.unit:
+                meta_parts.append(f"Unit: {self.current_dim.unit}")
+            if self.current_dim.default_val is not None:
+                meta_parts.append(f"Default: {self.current_dim.default_val}")
+            self.meta_lbl.config(text="  •  ".join(meta_parts))
+
+            desc_text = self.current_dim.tooltip.strip() if self.current_dim.tooltip else "(No tooltip provided in schema)"
+            self.desc_lbl.config(text=desc_text)
+            self.summary_badge.config(text=f"[{self.current_dim.category}]")
+
+            # CRITICAL: If the setting key has changed, reset previously selected values
+            # and auto-select sensible presets for the NEW setting.
+            if new_key != self._current_key:
+                self._current_key = new_key
+                if self.current_dim.presets:
+                    # Pick up to first 2 presets of the new setting
+                    first_presets = [p.value for p in self.current_dim.presets[:2]]
+                    self.selected_values = list(dict.fromkeys(first_presets))
+                else:
+                    self.selected_values = []
 
             self._refresh_presets_ui()
             self._render_selected_values()
@@ -221,9 +276,13 @@ class DimensionCard(ttk.Frame):
 
         self.presets_title_lbl.pack(anchor="w", pady=(0, 2))
         for p in self.current_dim.presets:
+            is_active = p.value in self.selected_values
+            prefix = "✓ " if is_active else ""
+            btn_text = f"{prefix}{p.display_name()}"
+
             btn = ttk.Button(
                 self.presets_chips_box,
-                text=p.display_name(),
+                text=btn_text,
                 command=lambda val=p.value: self._toggle_preset_value(val),
             )
             btn.pack(side="left", padx=2, pady=1)
@@ -236,6 +295,7 @@ class DimensionCard(ttk.Frame):
             self.selected_values.remove(val)
         else:
             self.selected_values.append(val)
+        self._refresh_presets_ui()
         self._render_selected_values()
         self.on_change_callback()
 
@@ -248,12 +308,14 @@ class DimensionCard(ttk.Frame):
             if p not in self.selected_values:
                 self.selected_values.append(p)
         self.custom_val_var.set("")
+        self._refresh_presets_ui()
         self._render_selected_values()
         self.on_change_callback()
 
     def _remove_value(self, val: str) -> None:
         if val in self.selected_values:
             self.selected_values.remove(val)
+            self._refresh_presets_ui()
             self._render_selected_values()
             self.on_change_callback()
 
@@ -264,17 +326,17 @@ class DimensionCard(ttk.Frame):
         if not self.selected_values:
             ttk.Label(
                 self.values_container,
-                text="(No values selected - click a preset chip or type a value above)",
+                text="(No values selected — click a preset above or enter a custom value)",
                 font=("Segoe UI", 8, "italic"),
-                foreground="#888888",
+                foreground="#64748b",
             ).pack(side="left")
             return
 
         for val in self.selected_values:
-            chip = ttk.Frame(self.values_container, padding=(4, 1), relief="groove", borderwidth=1)
-            chip.pack(side="left", padx=2, pady=2)
+            chip = ttk.Frame(self.values_container, padding=(6, 2), style="Chip.TFrame")
+            chip.pack(side="left", padx=3, pady=2)
             ttk.Label(chip, text=val, font=("Segoe UI", 9, "bold")).pack(side="left", padx=(2, 4))
-            del_btn = ttk.Label(chip, text="✕", foreground="#dc2626", cursor="hand2")
+            del_btn = ttk.Label(chip, text="✕", foreground="#dc2626", cursor="hand2", font=("Segoe UI", 9, "bold"))
             del_btn.pack(side="right", padx=(0, 2))
             del_btn.bind("<Button-1>", lambda e, v=val: self._remove_value(v))
 
@@ -287,22 +349,28 @@ class DimensionCard(ttk.Frame):
         dim = self.catalog.get_dimension(key)
         if not dim:
             return False
+
         self.cat_var.set(dim.category)
         self.filter_var.set("")
-        self._populate_dimensions_for_category()
+        self._populate_dimensions_for_category(preserve_selection=False)
 
-        # Find matching dimension in combo
+        # Match dimension in combo
         for i, d in enumerate(self._category_dims):
             if d.key == dim.key:
                 self.dim_combo.current(i)
                 self.current_dim = d
+                self._current_key = d.key
                 break
 
         self.selected_values = [str(v) for v in values]
-        desc = dim.tooltip or "(No tooltip available)"
+
+        meta_parts = [f"Key: {dim.key}", f"Type: {dim.type}"]
         if dim.unit:
-            desc = f"[{dim.unit}] {desc}"
-        self.desc_lbl.config(text=desc)
+            meta_parts.append(f"Unit: {dim.unit}")
+        self.meta_lbl.config(text="  •  ".join(meta_parts))
+        self.desc_lbl.config(text=dim.tooltip or "(No tooltip provided in schema)")
+        self.summary_badge.config(text=f"[{dim.category}]")
+
         self._refresh_presets_ui()
         self._render_selected_values()
         self.on_change_callback()
@@ -317,8 +385,8 @@ class OrcaMatrixApp(tk.Tk):
 
         self._is_destroyed = False
         self.title("OrcaSlicer Matrix Slicer & Comparison Tool")
-        self.geometry("1060x860")
-        self.minsize(960, 720)
+        self.geometry("1100x880")
+        self.minsize(980, 720)
 
         # Style configuration
         self.style = ttk.Style(self)
@@ -331,12 +399,10 @@ class OrcaMatrixApp(tk.Tk):
 
         self.catalog = get_default_catalog()
         self.client: Optional[OrcaClient] = client
-        self.connected_status: Dict[str, Any] = {}
         self.active_dimension_cards: List[DimensionCard] = []
 
         self.is_running = False
         self.runner_thread: Optional[threading.Thread] = None
-        self.cancel_requested = False
 
         self._build_main_ui()
 
@@ -354,16 +420,18 @@ class OrcaMatrixApp(tk.Tk):
 
     def _configure_styles(self) -> None:
         self.style.configure(".", font=("Segoe UI", 9))
-        self.style.configure("Header.TLabel", font=("Segoe UI", 14, "bold"))
-        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground="#666666")
-        self.style.configure("Card.TFrame", background="#ffffff", relief="solid", borderwidth=1)
+        self.style.configure("Header.TLabel", font=("Segoe UI", 15, "bold"), foreground="#0f172a")
+        self.style.configure("SubHeader.TLabel", font=("Segoe UI", 9), foreground="#64748b")
+        self.style.configure("Card.TFrame", relief="solid", borderwidth=1)
+        self.style.configure("CardHeader.TFrame", background="#f8fafc")
+        self.style.configure("Chip.TFrame", relief="solid", borderwidth=1)
         self.style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
         self.style.configure("StatusConnected.TLabel", foreground="#16a34a", font=("Segoe UI", 9, "bold"))
         self.style.configure("StatusDisconnected.TLabel", foreground="#dc2626", font=("Segoe UI", 9, "bold"))
 
     def _build_main_ui(self) -> None:
-        # Top Frame: Header & Plater Status Banner
-        top_frame = ttk.Frame(self, padding="12")
+        # Top Header Bar: Title, Subtitle, and Connection Status Card
+        top_frame = ttk.Frame(self, padding="14")
         top_frame.pack(fill="x")
 
         title_box = ttk.Frame(top_frame)
@@ -371,12 +439,12 @@ class OrcaMatrixApp(tk.Tk):
         ttk.Label(title_box, text="OrcaSlicer Matrix Tool", style="Header.TLabel").pack(anchor="w")
         ttk.Label(
             title_box,
-            text="Multi-dimensional slicer matrix & visual compare generator (Max 3 Dimensions, Max 8 Variants)",
+            text="Multi-dimensional slicer matrix & visual compare generator  •  Max 3 Dimensions, Max 8 Permutations",
             style="SubHeader.TLabel",
-        ).pack(anchor="w")
+        ).pack(anchor="w", pady=(2, 0))
 
         # Connection Status Box
-        conn_box = ttk.Frame(top_frame, padding="6", relief="groove", borderwidth=1)
+        conn_box = ttk.Frame(top_frame, padding="8", relief="solid", borderwidth=1)
         conn_box.pack(side="right", fill="y")
 
         self.conn_dot_lbl = ttk.Label(conn_box, text="● Checking connection...", style="SubHeader.TLabel")
@@ -386,18 +454,18 @@ class OrcaMatrixApp(tk.Tk):
             conn_box,
             text="Plater: Connecting to 127.0.0.1:13130...",
             font=("Segoe UI", 8),
-            foreground="#555555",
+            foreground="#475569",
         )
         self.plater_info_lbl.pack(anchor="e")
 
         btn_row = ttk.Frame(conn_box)
-        btn_row.pack(anchor="e", pady=(2, 0))
-        self.refresh_btn = ttk.Button(btn_row, text="🔄 Refresh Plater", width=14, command=self._check_connection_async)
+        btn_row.pack(anchor="e", pady=(3, 0))
+        self.refresh_btn = ttk.Button(btn_row, text="🔄 Refresh Plater", width=15, command=self._check_connection_async)
         self.refresh_btn.pack(side="right")
 
         # Main Paned / Split Layout: Left is Matrix Builder, Right is Permutations & Run
         main_split = ttk.PanedWindow(self, orient="horizontal")
-        main_split.pack(fill="both", expand=True, padx=12, pady=(0, 8))
+        main_split.pack(fill="both", expand=True, padx=14, pady=(0, 8))
 
         # LEFT PANE: Matrix Dimensions Builder
         left_frame = ttk.Frame(main_split, padding="4")
@@ -410,6 +478,7 @@ class OrcaMatrixApp(tk.Tk):
             dim_header,
             text="Matrix Dimensions (0 / 3 active)",
             font=("Segoe UI", 11, "bold"),
+            foreground="#0f172a",
         )
         self.dim_count_badge.pack(side="left")
 
@@ -421,17 +490,37 @@ class OrcaMatrixApp(tk.Tk):
         self.add_dim_btn.pack(side="right")
 
         # Scrollable container for up to 3 Dimension Cards
-        self.dim_scroll_canvas = tk.Canvas(left_frame, highlightthickness=0)
-        self.dim_scrollbar = ttk.Scrollbar(left_frame, orient="vertical", command=self.dim_scroll_canvas.yview)
+        scroll_outer = ttk.Frame(left_frame)
+        scroll_outer.pack(fill="both", expand=True)
+
+        self.dim_scroll_canvas = tk.Canvas(scroll_outer, highlightthickness=0)
+        self.dim_scrollbar = ttk.Scrollbar(scroll_outer, orient="vertical", command=self.dim_scroll_canvas.yview)
         self.dim_cards_box = ttk.Frame(self.dim_scroll_canvas)
 
-        self.dim_cards_box.bind(
-            "<Configure>",
-            lambda e: self.dim_scroll_canvas.configure(scrollregion=self.dim_scroll_canvas.bbox("all")),
+        # Dynamic canvas window matching canvas width on resize
+        self.dim_cards_window = self.dim_scroll_canvas.create_window(
+            (0, 0),
+            window=self.dim_cards_box,
+            anchor="nw",
         )
-        self.dim_scroll_canvas.create_window((0, 0), window=self.dim_cards_box, anchor="nw", width=540)
-        self.dim_scroll_canvas.configure(yscrollcommand=self.dim_scrollbar.set)
 
+        def _on_canvas_configure(event: Any) -> None:
+            # Dynamically stretch the card container to full width minus scrollbar padding
+            self.dim_scroll_canvas.itemconfig(self.dim_cards_window, width=event.width)
+
+        def _on_frame_configure(event: Any) -> None:
+            self.dim_scroll_canvas.configure(scrollregion=self.dim_scroll_canvas.bbox("all"))
+
+        def _on_mousewheel(event: Any) -> None:
+            if not self._is_destroyed and self.dim_scroll_canvas.winfo_exists():
+                self.dim_scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+        self.dim_scroll_canvas.bind("<Configure>", _on_canvas_configure)
+        self.dim_cards_box.bind("<Configure>", _on_frame_configure)
+        self.dim_scroll_canvas.bind("<MouseWheel>", _on_mousewheel)
+        self.dim_cards_box.bind("<MouseWheel>", _on_mousewheel)
+
+        self.dim_scroll_canvas.configure(yscrollcommand=self.dim_scrollbar.set)
         self.dim_scroll_canvas.pack(side="left", fill="both", expand=True)
         self.dim_scrollbar.pack(side="right", fill="y")
 
@@ -440,31 +529,33 @@ class OrcaMatrixApp(tk.Tk):
         main_split.add(right_frame, weight=2)
 
         # Permutation Status Banner Card
-        self.perm_banner = ttk.Frame(right_frame, padding="8", relief="solid", borderwidth=1)
+        self.perm_banner = ttk.Frame(right_frame, padding="10", relief="solid", borderwidth=1)
         self.perm_banner.pack(fill="x", pady=(0, 8))
 
         self.perm_formula_lbl = ttk.Label(
             self.perm_banner,
             text="Formula: 0 variants",
-            font=("Segoe UI", 9, "bold"),
+            font=("Segoe UI", 10, "bold"),
+            foreground="#1e293b",
         )
         self.perm_formula_lbl.pack(anchor="w")
 
         self.perm_status_lbl = ttk.Label(
             self.perm_banner,
             text="Status: Please add at least one dimension.",
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 9, "bold"),
+            foreground="#64748b",
         )
-        self.perm_status_lbl.pack(anchor="w", pady=(2, 0))
+        self.perm_status_lbl.pack(anchor="w", pady=(3, 0))
 
         self.perm_suggestions_lbl = ttk.Label(
             self.perm_banner,
             text="",
-            wraplength=400,
+            wraplength=380,
             font=("Segoe UI", 8),
             foreground="#dc2626",
         )
-        self.perm_suggestions_lbl.pack(anchor="w", pady=(2, 0))
+        self.perm_suggestions_lbl.pack(anchor="w", pady=(3, 0))
 
         # Permutations Table
         table_lbl = ttk.Label(right_frame, text="Permutation Variants Preview:", font=("Segoe UI", 9, "bold"))
@@ -475,13 +566,13 @@ class OrcaMatrixApp(tk.Tk):
         self.perm_tree.heading("index", text="#")
         self.perm_tree.heading("name", text="Variant Name")
         self.perm_tree.heading("gcode", text="G-code File")
-        self.perm_tree.column("index", width=30, stretch=False, anchor="center")
-        self.perm_tree.column("name", width=240, stretch=True)
+        self.perm_tree.column("index", width=32, stretch=False, anchor="center")
+        self.perm_tree.column("name", width=230, stretch=True)
         self.perm_tree.column("gcode", width=140, stretch=False)
         self.perm_tree.pack(fill="x", pady=(0, 8))
 
         # Output & Options Frame
-        opts_frame = ttk.LabelFrame(right_frame, text="Run Options", padding="8")
+        opts_frame = ttk.LabelFrame(right_frame, text="Execution Options", padding="10")
         opts_frame.pack(fill="x", pady=(0, 8))
 
         dir_row = ttk.Frame(opts_frame)
@@ -499,7 +590,7 @@ class OrcaMatrixApp(tk.Tk):
             text="Non-interactive (Auto-proceed past ETA gate)",
             variable=self.non_interactive_var,
         )
-        self.non_int_chk.pack(anchor="w")
+        self.non_int_chk.pack(anchor="w", pady=(2, 1))
 
         self.launch_viewer_var = tk.BooleanVar(value=True)
         self.launch_viewer_chk = ttk.Checkbutton(
@@ -507,7 +598,7 @@ class OrcaMatrixApp(tk.Tk):
             text="Launch OrcaSlicer Compare Viewer upon completion",
             variable=self.launch_viewer_var,
         )
-        self.launch_viewer_chk.pack(anchor="w")
+        self.launch_viewer_chk.pack(anchor="w", pady=(1, 2))
 
         # Action Buttons
         actions_frame = ttk.Frame(right_frame)
@@ -525,8 +616,8 @@ class OrcaMatrixApp(tk.Tk):
         self.run_btn.pack(side="left", fill="x", expand=True, padx=(4, 0))
 
         # Bottom Frame: Execution Progress & Log Window
-        bottom_frame = ttk.LabelFrame(self, text="Execution Progress & Log", padding="8")
-        bottom_frame.pack(fill="both", expand=True, padx=12, pady=(0, 10))
+        bottom_frame = ttk.LabelFrame(self, text="Execution Progress & Log", padding="10")
+        bottom_frame.pack(fill="both", expand=True, padx=14, pady=(0, 10))
 
         prog_row = ttk.Frame(bottom_frame)
         prog_row.pack(fill="x", pady=(0, 4))
@@ -537,16 +628,16 @@ class OrcaMatrixApp(tk.Tk):
         self.progress_lbl = ttk.Label(prog_row, text="Ready", font=("Segoe UI", 9, "bold"))
         self.progress_lbl.pack(side="right")
 
-        self.log_text = ScrolledText(bottom_frame, height=9, font=("Consolas", 8), background="#1e1e1e", foreground="#d4d4d4")
+        self.log_text = ScrolledText(bottom_frame, height=8, font=("Consolas", 8), background="#18181b", foreground="#e4e4e7")
         self.log_text.pack(fill="both", expand=True)
 
         # Configure log tag colors
         self.log_text.tag_config("info", foreground="#60a5fa")
-        self.log_text.tag_config("ok", foreground="#4ade80")
-        self.log_text.tag_config("warn", foreground="#facc15")
+        self.log_text.tag_config("ok", foreground="#34d399")
+        self.log_text.tag_config("warn", foreground="#fbbf24")
         self.log_text.tag_config("err", foreground="#f87171")
 
-        # Add 2 default high-value dimensions to start
+        # Add 2 default dimensions to start
         self._add_dimension(default_key="layer_height", default_values=["0.16", "0.20"])
         self._add_dimension(default_key="wall_loops", default_values=["2", "3"])
 
@@ -558,6 +649,8 @@ class OrcaMatrixApp(tk.Tk):
     def _log_message(self, message: str) -> None:
         """Append line to the log text widget thread-safely."""
         def append() -> None:
+            if self._is_destroyed:
+                return
             tag = None
             if "[OK]" in message or "successfully" in message.lower():
                 tag = "ok"
@@ -571,7 +664,11 @@ class OrcaMatrixApp(tk.Tk):
             self.log_text.insert(tk.END, message + "\n", tag)
             self.log_text.see(tk.END)
 
-        self.after(0, append)
+        if not self._is_destroyed:
+            try:
+                self.after(0, append)
+            except Exception:
+                pass
 
     def _check_connection_async(self) -> None:
         """Asynchronously connect to OrcaSlicer to prevent blocking UI."""
@@ -602,6 +699,8 @@ class OrcaMatrixApp(tk.Tk):
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_connection_success(self, status: Dict[str, Any], objects: List[Dict[str, Any]]) -> None:
+        if self._is_destroyed:
+            return
         self.refresh_btn.config(state="normal")
         app_name = status.get("app") or "OrcaSlicer"
         app_ver = status.get("app_version") or status.get("version") or "2.4.2"
@@ -622,6 +721,8 @@ class OrcaMatrixApp(tk.Tk):
         self._log_message(f"[OK] Connected to {app_name} v{app_ver} on port 13130. Plater: {obj_str}")
 
     def _on_connection_failure(self, err_msg: str) -> None:
+        if self._is_destroyed:
+            return
         self.refresh_btn.config(state="normal")
         self.conn_dot_lbl.config(text="○ Disconnected from OrcaSlicer", style="StatusDisconnected.TLabel")
         self.plater_info_lbl.config(text=f"127.0.0.1:13130 offline ({err_msg[:60]})")
@@ -652,7 +753,7 @@ class OrcaMatrixApp(tk.Tk):
             on_change_callback=self._on_dimensions_changed,
             on_remove_callback=self._remove_dimension,
         )
-        card.pack(fill="x", pady=4, padx=2)
+        card.pack(fill="x", pady=6, padx=4)
         self.active_dimension_cards.append(card)
 
         if default_key:
@@ -669,7 +770,7 @@ class OrcaMatrixApp(tk.Tk):
             # Re-index remaining cards
             for i, c in enumerate(self.active_dimension_cards):
                 c.index = i
-                c.title_lbl.config(text=f"Dimension #{i + 1} (Axis {chr(65 + i)})")
+                c.title_lbl.config(text=f"Dimension #{i + 1}  •  Axis {chr(65 + i)}")
 
             self._update_dimension_count_ui()
             self._on_dimensions_changed()
@@ -704,7 +805,7 @@ class OrcaMatrixApp(tk.Tk):
 
         if not resolved_matrix or total == 0:
             self.perm_formula_lbl.config(text="Formula: 0 variants")
-            self.perm_status_lbl.config(text="Status: Add values to active dimensions.", foreground="#555555")
+            self.perm_status_lbl.config(text="Status: Add values to active dimensions.", foreground="#64748b")
             self.perm_suggestions_lbl.config(text="")
             self.run_btn.config(state="disabled")
             self.dry_run_btn.config(state="disabled")
@@ -745,7 +846,9 @@ class OrcaMatrixApp(tk.Tk):
                 build_variants(resolved_matrix)
             except VariantLimitExceededError as err:
                 suggestions = getattr(err, "suggestions", [])
-                s_text = "Suggestions to stay within 8:\n" + "\n".join(f"• {s}" for s in err._calculate_reduction_suggestions(resolved_matrix, MAX_VARIANTS))
+                s_text = "Suggestions to stay within 8:\n" + "\n".join(
+                    f"• {s}" for s in err._calculate_reduction_suggestions(resolved_matrix, MAX_VARIANTS)
+                )
                 self.perm_suggestions_lbl.config(text=s_text)
             except Exception:
                 pass
@@ -811,10 +914,16 @@ class OrcaMatrixApp(tk.Tk):
 
         def progress_cb(curr: int, total: int, variant: Variant, status: str, pct: float) -> None:
             def update_ui() -> None:
+                if self._is_destroyed:
+                    return
                 overall_pct = ((curr - 1) / total) * 100 + (pct / total)
                 self.progress_bar["value"] = overall_pct
                 self.progress_lbl.config(text=f"Variant {curr}/{total}: {variant.name[:35]}... [{status}]")
-            self.after(0, update_ui)
+            if not self._is_destroyed:
+                try:
+                    self.after(0, update_ui)
+                except Exception:
+                    pass
 
         def worker() -> None:
             try:
@@ -832,15 +941,19 @@ class OrcaMatrixApp(tk.Tk):
                 )
 
                 manifest_path, manifest_data = runner.run(matrix)
-                self.after(0, lambda: self._on_run_finished(manifest_path, dry_run))
+                if not self._is_destroyed:
+                    self.after(0, lambda: self._on_run_finished(manifest_path, dry_run))
 
             except Exception as e:
-                self.after(0, lambda: self._on_run_error(str(e)))
+                if not self._is_destroyed:
+                    self.after(0, lambda: self._on_run_error(str(e)))
 
         self.runner_thread = threading.Thread(target=worker, daemon=True)
         self.runner_thread.start()
 
     def _on_run_finished(self, manifest_path: Path, dry_run: bool) -> None:
+        if self._is_destroyed:
+            return
         self.is_running = False
         self.progress_bar["value"] = 100
         self.progress_lbl.config(text="Complete!")
@@ -864,6 +977,8 @@ class OrcaMatrixApp(tk.Tk):
         messagebox.showinfo("Matrix Slice Succeeded", msg)
 
     def _on_run_error(self, error_str: str) -> None:
+        if self._is_destroyed:
+            return
         self.is_running = False
         self.progress_lbl.config(text="Failed")
         self._on_dimensions_changed()
