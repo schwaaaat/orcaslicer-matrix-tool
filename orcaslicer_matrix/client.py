@@ -184,13 +184,13 @@ class OrcaClient:
                 "Ensure OrcaSlicer is running and Remote API is enabled in Preferences > Remote API."
             ) from e
 
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self, timeout: Optional[float] = None) -> Dict[str, Any]:
         """Fetch current app/plate status: presets, objects, and slice result validity."""
-        return self._request("GET", "/api/v1/status")
+        return self._request("GET", "/api/v1/status", timeout=timeout)
 
-    def get_objects(self) -> List[Dict[str, Any]]:
+    def get_objects(self, timeout: Optional[float] = None) -> List[Dict[str, Any]]:
         """Fetch list of objects currently on the plater."""
-        res = self._request("GET", "/api/v1/objects")
+        res = self._request("GET", "/api/v1/objects", timeout=timeout)
         if isinstance(res, dict) and "objects" in res:
             return res["objects"]
         return []

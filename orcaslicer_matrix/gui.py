@@ -728,17 +728,18 @@ class OrcaMatrixApp(tk.Tk):
             try:
                 if not self.client:
                     self.client = OrcaClient()
-                status = self.client.get_status()
-                objects = self.client.get_objects()
+                status = self.client.get_status(timeout=2.0)
+                objects = self.client.get_objects(timeout=2.0)
                 if not self._is_destroyed:
                     try:
-                        self.after(0, lambda: self._on_connection_success(status, objects))
+                        self.after(0, lambda s=status, o=objects: self._on_connection_success(s, o))
                     except Exception:
                         pass
             except Exception as e:
+                err_msg = str(e)
                 if not self._is_destroyed:
                     try:
-                        self.after(0, lambda: self._on_connection_failure(str(e)))
+                        self.after(0, lambda err=err_msg: self._on_connection_failure(err))
                     except Exception:
                         pass
 
@@ -1016,11 +1017,12 @@ class OrcaMatrixApp(tk.Tk):
 
                 manifest_path, manifest_data = runner.run(matrix)
                 if not self._is_destroyed:
-                    self.after(0, lambda: self._on_run_finished(manifest_path, dry_run))
+                    self.after(0, lambda p=manifest_path, d=dry_run: self._on_run_finished(p, d))
 
             except Exception as e:
+                err_str = str(e)
                 if not self._is_destroyed:
-                    self.after(0, lambda: self._on_run_error(str(e)))
+                    self.after(0, lambda err=err_str: self._on_run_error(err))
 
         self.runner_thread = threading.Thread(target=worker, daemon=True)
         self.runner_thread.start()
