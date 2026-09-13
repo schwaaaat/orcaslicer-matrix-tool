@@ -6,7 +6,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from orcaslicer_matrix.gui import DimensionCard, OrcaMatrixApp
+from orcaslicer_matrix.gui import (
+    DimensionCard,
+    OrcaMatrixApp,
+    load_user_settings,
+    save_user_settings,
+)
 from orcaslicer_matrix.matrix import MAX_DIMENSIONS, MAX_VARIANTS
 
 
@@ -452,6 +457,110 @@ class TestOrcaMatrixApp(unittest.TestCase):
         items_time_asc = self.app.summary_tree.get_children()
         time_vals = [self.app.summary_tree.item(i)["values"][1] for i in items_time_asc]
         self.assertEqual(time_vals, ["45m", "1h 00m"])
+
+    def test_viewer_settings_persistence(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "settings.json"
+            with patch("orcaslicer_matrix.gui.SETTINGS_FILE", test_file), \
+                 patch("orcaslicer_matrix.gui.SETTINGS_DIR", Path(tmpdir)):
+                self.assertEqual(load_user_settings(), {})
+                save_user_settings({"viewer_path": "C:\\MyPath\\orca.exe"})
+                loaded = load_user_settings()
+                self.assertEqual(loaded.get("viewer_path"), "C:\\MyPath\\orca.exe")
+
+    def test_viewer_toggle_and_path_validation(self):
+        # 1. Test toggle disabling / enabling controls
+        self.app.launch_viewer_var.set(False)
+        self.app._on_launch_viewer_toggle()
+        self.assertEqual(str(self.app.viewer_combo.cget("state")), "disabled")
+        self.assertEqual(str(self.app.browse_viewer_btn.cget("state")), "disabled")
+
+        self.app.launch_viewer_var.set(True)
+        self.app._on_launch_viewer_toggle()
+        self.assertEqual(str(self.app.viewer_combo.cget("state")), "normal")
+        self.assertEqual(str(self.app.browse_viewer_btn.cget("state")), "normal")
+
+        # 2. Test status validation with non-existent file
+        self.app.viewer_path_var.set("C:\\non_existent_dir\\orca-fake.exe")
+        self.app._update_viewer_status()
+        self.assertIn("File not found", self.app.viewer_status_lbl.cget("text"))
+
+        # 3. Test status validation with empty path
+        self.app.viewer_path_var.set("")
+        self.app._update_viewer_status()
+        self.assertIn("No viewer executable specified", self.app.viewer_status_lbl.cget("text"))
+
+        # 4. Test status validation with real existing file
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
+            real_exe = f.name
+        try:
+            self.app.viewer_path_var.set(real_exe)
+            self.app._update_viewer_status()
+            self.assertIn("✓ Ready:", self.app.viewer_status_lbl.cget("text"))
+        finally:
+            Path(real_exe).unlink(missing_ok=True)
+
+    def test_browse_viewer_exe_updates_selection(self):
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as f:
+            fake_exe = f.name
+        try:
+            with patch("tkinter.filedialog.askopenfilename", return_value=fake_exe):
+                self.app._browse_viewer_exe()
+                self.assertEqual(self.app.viewer_path_var.get(), fake_exe)
+                self.assertIn(fake_exe, self.app.viewer_combo["values"])
+        finally:
+            Path(fake_exe).unlink(missing_ok=True)
+
+    def test_open_compare_viewer_button(self):
+        # When no manifest has run yet
+        self.app._last_manifest_path = None
+        with patch("tkinter.messagebox.showinfo") as mock_info:
+            self.app._open_compare_viewer()
+            mock_info.assert_called_once()
+            self.assertIn("No completed matrix manifest", mock_info.call_args[0][1])
+
+        # When manifest exists but viewer exe cannot be found
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as mf:
+            manifest_file = Path(mf.name)
+        try:
+            self.app._last_manifest_path = manifest_file
+            self.app.viewer_path_var.set("C:\\does_not_exist\\orca.exe")
+            with patch("tkinter.messagebox.showerror") as mock_err:
+                self.app._open_compare_viewer()
+                mock_err.assert_called_once()
+                self.assertIn("OrcaSlicer executable not found", mock_err.call_args[0][1])
+
+            # When manifest exists and viewer exe exists
+            with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as ef:
+                exe_file = Path(ef.name)
+            try:
+                self.app.viewer_path_var.set(str(exe_file))
+                with patch("orcaslicer_matrix.gui.launch_compare_viewer") as mock_launch:
+                    self.app._open_compare_viewer()
+                    mock_launch.assert_called_once_with(exe_file, manifest_file)
+            finally:
+                exe_file.unlink(missing_ok=True)
+        finally:
+            manifest_file.unlink(missing_ok=True)
+
+    def test_run_finished_passes_configured_viewer_path(self):
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as mf:
+            manifest_file = Path(mf.name)
+            manifest_file.write_text(json.dumps({"comparison": {}}), encoding="utf-8")
+        with tempfile.NamedTemporaryFile(suffix=".exe", delete=False) as ef:
+            exe_file = Path(ef.name)
+
+        try:
+            self.app.launch_viewer_var.set(True)
+            self.app.viewer_path_var.set(str(exe_file))
+            with patch("orcaslicer_matrix.gui.launch_compare_viewer") as mock_launch, \
+                 patch("tkinter.messagebox.showinfo"):
+                self.app._on_run_finished(manifest_file, dry_run=False)
+                mock_launch.assert_called_once_with(exe_file, manifest_file)
+                self.assertEqual(self.app._last_manifest_path, manifest_file)
+        finally:
+            manifest_file.unlink(missing_ok=True)
+            exe_file.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

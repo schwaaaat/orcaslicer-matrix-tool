@@ -11,6 +11,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 import threading
 import time
@@ -33,8 +34,36 @@ from .matrix import (
     build_variants,
 )
 from .runner import MatrixRunner, format_duration
-from .cli import find_viewer_executable, launch_compare_viewer
+from .cli import KNOWN_VIEWER_LOCATIONS, find_viewer_executable, launch_compare_viewer
 from .analytics import ROLE_COLORS, format_clean_variant_name, format_compact_label, get_role_color
+
+
+# User Settings Persistence (~/.orcaslicer_matrix/settings.json)
+SETTINGS_DIR = Path.home() / ".orcaslicer_matrix"
+SETTINGS_FILE = SETTINGS_DIR / "settings.json"
+
+
+def load_user_settings() -> Dict[str, Any]:
+    """Load persistent user settings (such as viewer executable path)."""
+    try:
+        if SETTINGS_FILE.is_file():
+            with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def save_user_settings(settings: Dict[str, Any]) -> None:
+    """Save persistent user settings."""
+    try:
+        SETTINGS_DIR.mkdir(parents=True, exist_ok=True)
+        current = load_user_settings()
+        current.update(settings)
+        with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
+            json.dump(current, f, indent=2)
+    except Exception:
+        pass
 
 
 # Enable DPI awareness on Windows if available
@@ -408,6 +437,9 @@ class OrcaMatrixApp(tk.Tk):
 
         self.is_running = False
         self.runner_thread: Optional[threading.Thread] = None
+        self._last_comparison: Optional[Dict[str, Any]] = None
+        self._last_manifest_path: Optional[Path] = None
+        self._last_html_report: Optional[Path] = None
 
         self._build_main_ui()
 
@@ -635,7 +667,9 @@ class OrcaMatrixApp(tk.Tk):
         self.copy_summary_btn = ttk.Button(sum_btn_row, text="📋 Copy Summary Markdown", command=self._copy_summary_markdown)
         self.copy_summary_btn.pack(side="left", padx=(0, 4))
         self.open_html_btn = ttk.Button(sum_btn_row, text="🌐 Open HTML Report", command=self._open_html_report)
-        self.open_html_btn.pack(side="left")
+        self.open_html_btn.pack(side="left", padx=(0, 4))
+        self.open_viewer_btn = ttk.Button(sum_btn_row, text="🔍 Open Compare Viewer", command=self._open_compare_viewer)
+        self.open_viewer_btn.pack(side="left")
 
         # --- TAB 2: Filament by Line Type (Image 2) ---
         self.tab_line_types = ttk.Frame(self.results_notebook, padding="4")
@@ -766,8 +800,41 @@ class OrcaMatrixApp(tk.Tk):
             opts_frame,
             text="Launch OrcaSlicer Compare Viewer upon completion",
             variable=self.launch_viewer_var,
+            command=self._on_launch_viewer_toggle,
         )
-        self.launch_viewer_chk.pack(anchor="w", pady=(2, 2))
+        self.launch_viewer_chk.pack(anchor="w", pady=(3, 1))
+
+        viewer_path_row = ttk.Frame(opts_frame)
+        viewer_path_row.pack(fill="x", padx=(20, 0), pady=(1, 2))
+
+        detected_viewers = self._get_detected_viewer_paths()
+        initial_viewer = self._get_initial_viewer_path(detected_viewers)
+        combo_values = list(detected_viewers)
+        if initial_viewer and initial_viewer not in combo_values:
+            combo_values.insert(0, initial_viewer)
+
+        self.viewer_path_var = tk.StringVar(value=initial_viewer)
+        self.viewer_combo = ttk.Combobox(
+            viewer_path_row,
+            textvariable=self.viewer_path_var,
+            values=combo_values,
+            font=("Segoe UI", 8),
+        )
+        self.viewer_combo.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.viewer_combo.bind("<<ComboboxSelected>>", lambda e: self._on_viewer_path_changed())
+        self.viewer_combo.bind("<KeyRelease>", lambda e: self._on_viewer_path_changed())
+
+        self.browse_viewer_btn = ttk.Button(
+            viewer_path_row,
+            text="Browse...",
+            width=9,
+            command=self._browse_viewer_exe,
+        )
+        self.browse_viewer_btn.pack(side="right")
+
+        self.viewer_status_lbl = ttk.Label(opts_frame, font=("Segoe UI", 8))
+        self.viewer_status_lbl.pack(anchor="w", padx=(20, 0), pady=(0, 3))
+        self._update_viewer_status()
 
         # Action Buttons
         actions_frame = ttk.Frame(right_frame)
@@ -833,6 +900,130 @@ class OrcaMatrixApp(tk.Tk):
             self.auto_skip_entry.config(state="normal")
         else:
             self.auto_skip_entry.config(state="disabled")
+
+    def _get_detected_viewer_paths(self) -> List[str]:
+        """Detect existing OrcaSlicer executables on the system."""
+        found: List[str] = []
+        seen = set()
+
+        for loc in KNOWN_VIEWER_LOCATIONS:
+            try:
+                p = Path(loc)
+                if p.is_file():
+                    resolved = str(p.resolve())
+                    if resolved.lower() not in seen:
+                        seen.add(resolved.lower())
+                        found.append(str(p))
+            except Exception:
+                pass
+
+        for cmd in ["orca-slicer", "OrcaSlicer", "orca_slicer"]:
+            try:
+                which_path = shutil.which(cmd)
+                if which_path and Path(which_path).is_file():
+                    resolved = str(Path(which_path).resolve())
+                    if resolved.lower() not in seen:
+                        seen.add(resolved.lower())
+                        found.append(str(which_path))
+            except Exception:
+                pass
+
+        return found
+
+    def _get_initial_viewer_path(self, detected: List[str]) -> str:
+        """Get the initial viewer path from saved settings or detected builds."""
+        saved = load_user_settings().get("viewer_path")
+        if saved and isinstance(saved, str):
+            saved_str = saved.strip()
+            if saved_str:
+                return saved_str
+
+        if detected:
+            return detected[0]
+        return ""
+
+    def _browse_viewer_exe(self) -> None:
+        """Open a file dialog to locate the OrcaSlicer executable."""
+        curr = self.viewer_path_var.get().strip()
+        initialdir = str(Path(curr).parent) if curr and Path(curr).parent.is_dir() else None
+        chosen = filedialog.askopenfilename(
+            title="Select OrcaSlicer Executable",
+            initialdir=initialdir,
+            filetypes=[("Executable Files", "*.exe"), ("All Files", "*.*")],
+        )
+        if chosen:
+            self.viewer_path_var.set(chosen)
+            vals = list(self.viewer_combo["values"])
+            if chosen not in vals:
+                vals.insert(0, chosen)
+                self.viewer_combo["values"] = vals
+            self._on_viewer_path_changed()
+
+    def _on_viewer_path_changed(self) -> None:
+        """Handle change in viewer executable path, update status and save settings."""
+        self._update_viewer_status()
+        val = self.viewer_path_var.get().strip()
+        save_user_settings({"viewer_path": val})
+
+    def _update_viewer_status(self) -> None:
+        """Update the validation label below the viewer path entry."""
+        raw = self.viewer_path_var.get().strip()
+        if not raw:
+            self.viewer_status_lbl.config(
+                text="⚠ No viewer executable specified (will search default paths)",
+                foreground="#f59e0b",
+            )
+            return
+
+        p = Path(raw)
+        if p.is_file():
+            parent_display = str(p.parent)
+            if len(parent_display) > 40:
+                parent_display = "..." + parent_display[-37:]
+            self.viewer_status_lbl.config(
+                text=f"✓ Ready: {p.name} ({parent_display})",
+                foreground="#16a34a",
+            )
+        else:
+            self.viewer_status_lbl.config(
+                text=f"⚠ File not found: {raw}",
+                foreground="#dc2626",
+            )
+
+    def _on_launch_viewer_toggle(self) -> None:
+        """Enable or disable viewer configuration controls based on launch toggle."""
+        if self.launch_viewer_var.get():
+            self.viewer_combo.config(state="normal")
+            self.browse_viewer_btn.config(state="normal")
+            self.viewer_status_lbl.config(state="normal")
+        else:
+            self.viewer_combo.config(state="disabled")
+            self.browse_viewer_btn.config(state="disabled")
+            self.viewer_status_lbl.config(state="disabled")
+
+    def _open_compare_viewer(self) -> None:
+        """Launch the OrcaSlicer compare viewer on the current manifest."""
+        manifest_path = getattr(self, "_last_manifest_path", None)
+        if not manifest_path or not Path(manifest_path).is_file():
+            messagebox.showinfo(
+                "Compare Viewer",
+                "No completed matrix manifest available yet. Run a matrix slice first.",
+            )
+            return
+
+        explicit_path = self.viewer_path_var.get().strip() or None
+        viewer_exe = find_viewer_executable(explicit_path)
+        if not viewer_exe:
+            messagebox.showerror(
+                "Compare Viewer",
+                f"OrcaSlicer executable not found.\n\n"
+                f"Configured path: {explicit_path or '(None)'}\n\n"
+                "Please select or browse for a valid orca-slicer.exe under Execution Options.",
+            )
+            return
+
+        self._log_message(f"[INFO] Launching compare viewer with: {viewer_exe}")
+        launch_compare_viewer(viewer_exe, Path(manifest_path))
 
     def _log_message(self, message: str) -> None:
         """Append line to the log text widget thread-safely."""
@@ -1183,6 +1374,8 @@ class OrcaMatrixApp(tk.Tk):
             messagebox.showinfo("Dry Run Complete", f"Matrix dry run succeeded!\nManifest target: {manifest_path}")
             return
 
+        self._last_manifest_path = manifest_path
+
         # Populate results dashboard
         try:
             with open(manifest_path, "r", encoding="utf-8") as f:
@@ -1195,13 +1388,17 @@ class OrcaMatrixApp(tk.Tk):
         msg = f"Matrix slices successfully completed!\n\nManifest: {manifest_path}"
         # Launch viewer if requested
         if self.launch_viewer_var.get():
-            viewer_exe = find_viewer_executable(None)
+            explicit_path = self.viewer_path_var.get().strip() or None
+            viewer_exe = find_viewer_executable(explicit_path)
             if viewer_exe:
                 self._log_message(f"[INFO] Launching compare viewer with: {viewer_exe}")
                 launch_compare_viewer(viewer_exe, manifest_path)
-                msg += "\n\nLaunched OrcaSlicer compare viewer."
+                msg += f"\n\nLaunched OrcaSlicer compare viewer ({viewer_exe.name})."
             else:
-                msg += "\n\nNote: OrcaSlicer executable not found to auto-launch viewer."
+                self._log_message(
+                    f"[WARNING] Could not launch compare viewer: executable not found at '{explicit_path}'"
+                )
+                msg += f"\n\nNote: OrcaSlicer executable not found at '{explicit_path or 'default locations'}'. You can set the viewer path in Execution Options."
 
         messagebox.showinfo("Matrix Slice Succeeded", msg)
 
@@ -1316,6 +1513,7 @@ class OrcaMatrixApp(tk.Tk):
     def _populate_results_dashboard(self, comparison: Dict[str, Any], manifest_path: Path) -> None:
         """Populate Summary, Line-Type breakdown, and Visual Charts with post-slice analytics."""
         self._last_comparison = comparison
+        self._last_manifest_path = manifest_path
         self._last_html_report = manifest_path.parent / "report.html"
 
         # Update recommendation banner

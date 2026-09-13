@@ -29,9 +29,9 @@ from .schema import UnknownSettingError
 
 
 KNOWN_VIEWER_LOCATIONS = [
-    Path(r"C:\Users\Justin\Apps\OrcaSlicer-MCP\orca-slicer.exe"),
-    Path(r"G:\Claude\OrcaBuild\OrcaSlicer-VFjr-package\OrcaSlicer-VFjr\orca-slicer.exe"),
     Path(r"G:\Claude\OrcaBuild\OrcaSlicer-VFjr\build\src\Release\orca-slicer.exe"),
+    Path(r"G:\Claude\OrcaBuild\OrcaSlicer-VFjr-package\OrcaSlicer-VFjr\orca-slicer.exe"),
+    Path(r"C:\Users\Justin\Apps\OrcaSlicer-MCP\orca-slicer.exe"),
     Path(r"C:\Program Files\OrcaSlicer\orca-slicer.exe"),
 ]
 
