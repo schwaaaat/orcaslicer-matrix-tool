@@ -183,6 +183,13 @@ def create_parser() -> argparse.ArgumentParser:
         help="Non-interactive mode: skip confirmation prompt after baseline slice ETA calculation.",
     )
     exec_group.add_argument(
+        "--auto-confirm-under",
+        type=float,
+        default=30.0,
+        metavar="SECONDS",
+        help="Auto-skip confirmation if total estimated slicing time is under this threshold in seconds (default: 30.0). Set to 0 to always prompt.",
+    )
+    exec_group.add_argument(
         "--dry-run",
         action="store_true",
         help="Resolve settings, check permutation count, snapshot plater, and exit without slicing.",
@@ -269,6 +276,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         timeout=args.timeout,
         non_interactive=args.yes,
         dry_run=args.dry_run,
+        auto_confirm_under_seconds=args.auto_confirm_under,
     )
 
     try:

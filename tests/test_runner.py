@@ -244,6 +244,88 @@ class TestMatrixRunner(unittest.TestCase):
         self.assertEqual(MockSlicerServer.config_store["layer_height"], "0.20")
         self.assertEqual(MockSlicerServer.config_store["wall_loops"], "2")
 
+    def test_eta_gate_auto_skips_when_under_threshold(self):
+        eta_confirm_called = []
+
+        def mock_confirm(wall_sec: float, remaining: int, est_rem: float) -> bool:
+            eta_confirm_called.append(True)
+            return False  # If it were called, it would abort
+
+        runner = MatrixRunner(
+            client=self.client,
+            output_dir=self.output_dir,
+            timeout=5.0,
+            non_interactive=False,
+            auto_confirm_under_seconds=60.0,
+            eta_confirm_fn=mock_confirm,
+        )
+
+        matrix = {
+            "layer_height": ["0.16", "0.24"],
+        }
+        manifest_path, manifest = runner.run(matrix)
+
+        # Confirm function should NOT have been called because total time is under 60s
+        self.assertEqual(len(eta_confirm_called), 0)
+        # Both variants should have been sliced
+        self.assertEqual(len(manifest["variants"]), 2)
+
+    def test_eta_gate_prompts_and_aborts_when_user_rejects(self):
+        eta_confirm_called = []
+
+        def mock_confirm(wall_sec: float, remaining: int, est_rem: float) -> bool:
+            eta_confirm_called.append((wall_sec, remaining, est_rem))
+            return False  # User says NO
+
+        runner = MatrixRunner(
+            client=self.client,
+            output_dir=self.output_dir,
+            timeout=5.0,
+            non_interactive=False,
+            auto_confirm_under_seconds=0.0,  # 0 forces confirmation prompt
+            eta_confirm_fn=mock_confirm,
+        )
+
+        matrix = {
+            "layer_height": ["0.16", "0.24"],
+        }
+        manifest_path, manifest = runner.run(matrix)
+
+        # Confirm function was invoked
+        self.assertEqual(len(eta_confirm_called), 1)
+        wall_sec, remaining, est_rem = eta_confirm_called[0]
+        self.assertEqual(remaining, 1)
+
+        # Slicing was aborted after baseline variant 1
+        self.assertEqual(len(manifest["variants"]), 1)
+        self.assertEqual(manifest["variants"][0]["name"], "layer_height=0.16")
+
+    def test_eta_gate_prompts_and_proceeds_when_user_approves(self):
+        eta_confirm_called = []
+
+        def mock_confirm(wall_sec: float, remaining: int, est_rem: float) -> bool:
+            eta_confirm_called.append(True)
+            return True  # User says YES
+
+        runner = MatrixRunner(
+            client=self.client,
+            output_dir=self.output_dir,
+            timeout=5.0,
+            non_interactive=False,
+            auto_confirm_under_seconds=0.0,  # 0 forces confirmation prompt
+            eta_confirm_fn=mock_confirm,
+        )
+
+        matrix = {
+            "layer_height": ["0.16", "0.24"],
+        }
+        manifest_path, manifest = runner.run(matrix)
+
+        # Confirm function was invoked
+        self.assertEqual(len(eta_confirm_called), 1)
+        # Slicing proceeded to finish all variants
+        self.assertEqual(len(manifest["variants"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

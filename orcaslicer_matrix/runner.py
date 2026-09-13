@@ -93,6 +93,7 @@ class MatrixRunner:
         timeout: float = 300.0,
         non_interactive: bool = False,
         dry_run: bool = False,
+        auto_confirm_under_seconds: Optional[float] = 30.0,
         log_callback: Optional[Callable[[str], None]] = None,
         eta_confirm_fn: Optional[Callable[[float, int, float], bool]] = None,
         progress_callback: Optional[Callable[[int, int, Variant, str, float], None]] = None,
@@ -102,6 +103,7 @@ class MatrixRunner:
         self.timeout = timeout
         self.non_interactive = non_interactive
         self.dry_run = dry_run
+        self.auto_confirm_under_seconds = auto_confirm_under_seconds
         self.log_callback = log_callback
         self.eta_confirm_fn = eta_confirm_fn
         self.progress_callback = progress_callback
@@ -222,7 +224,17 @@ class MatrixRunner:
                 self._log("=" * 68)
 
                 if not self.non_interactive:
-                    if self.eta_confirm_fn:
+                    is_under_threshold = (
+                        self.auto_confirm_under_seconds is not None
+                        and self.auto_confirm_under_seconds > 0
+                        and est_total_sec <= self.auto_confirm_under_seconds
+                    )
+                    if is_under_threshold and not v0_result.get("error"):
+                        self._log(
+                            f"[ETA Gate] Auto-proceeding: estimated total time (~{format_duration(est_total_sec)}) "
+                            f"is under approval threshold ({int(self.auto_confirm_under_seconds)}s)."
+                        )
+                    elif self.eta_confirm_fn:
                         proceed = self.eta_confirm_fn(wall_seconds, remaining_count, est_remaining_sec)
                         if not proceed:
                             self._log("\nMatrix execution cancelled by user. Finalizing manifest with completed variants...")

@@ -12,3 +12,4 @@ live_compare_run/
 test_restore_run/
 test_run/
 *.gcode
+output.md

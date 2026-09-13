@@ -28,7 +28,7 @@ from .matrix import (
     VariantLimitExceededError,
     build_variants,
 )
-from .runner import MatrixRunner
+from .runner import MatrixRunner, format_duration
 from .cli import find_viewer_executable, launch_compare_viewer
 
 
@@ -584,13 +584,40 @@ class OrcaMatrixApp(tk.Tk):
         self.browse_btn = ttk.Button(dir_row, text="Browse...", width=9, command=self._browse_output_dir)
         self.browse_btn.pack(side="right")
 
-        self.non_interactive_var = tk.BooleanVar(value=True)
-        self.non_int_chk = ttk.Checkbutton(
+        # ETA Gate & Approval controls
+        self.require_approval_var = tk.BooleanVar(value=True)
+        self.require_approval_chk = ttk.Checkbutton(
             opts_frame,
-            text="Non-interactive (Auto-proceed past ETA gate)",
-            variable=self.non_interactive_var,
+            text="Require approval after slicing baseline variant",
+            variable=self.require_approval_var,
+            command=self._on_approval_toggle,
         )
-        self.non_int_chk.pack(anchor="w", pady=(2, 1))
+        self.require_approval_chk.pack(anchor="w", pady=(3, 1))
+
+        auto_skip_row = ttk.Frame(opts_frame)
+        auto_skip_row.pack(anchor="w", padx=(20, 0), pady=(1, 2))
+
+        self.auto_skip_var = tk.BooleanVar(value=True)
+        self.auto_skip_chk = ttk.Checkbutton(
+            auto_skip_row,
+            text="Auto-skip approval if total time is under",
+            variable=self.auto_skip_var,
+            command=self._on_auto_skip_toggle,
+        )
+        self.auto_skip_chk.pack(side="left")
+
+        self.auto_skip_threshold_var = tk.StringVar(value="30")
+        self.auto_skip_entry = ttk.Spinbox(
+            auto_skip_row,
+            from_=1,
+            to=3600,
+            width=4,
+            textvariable=self.auto_skip_threshold_var,
+        )
+        self.auto_skip_entry.pack(side="left", padx=(4, 4))
+
+        self.auto_skip_unit_lbl = ttk.Label(auto_skip_row, text="sec")
+        self.auto_skip_unit_lbl.pack(side="left")
 
         self.launch_viewer_var = tk.BooleanVar(value=True)
         self.launch_viewer_chk = ttk.Checkbutton(
@@ -598,7 +625,7 @@ class OrcaMatrixApp(tk.Tk):
             text="Launch OrcaSlicer Compare Viewer upon completion",
             variable=self.launch_viewer_var,
         )
-        self.launch_viewer_chk.pack(anchor="w", pady=(1, 2))
+        self.launch_viewer_chk.pack(anchor="w", pady=(2, 2))
 
         # Action Buttons
         actions_frame = ttk.Frame(right_frame)
@@ -645,6 +672,25 @@ class OrcaMatrixApp(tk.Tk):
         chosen = filedialog.askdirectory(initialdir=self.output_dir_var.get())
         if chosen:
             self.output_dir_var.set(chosen)
+
+    def _on_approval_toggle(self) -> None:
+        """Enable or disable sub-controls based on approval requirement."""
+        if self.require_approval_var.get():
+            self.auto_skip_chk.config(state="normal")
+            if self.auto_skip_var.get():
+                self.auto_skip_entry.config(state="normal")
+            else:
+                self.auto_skip_entry.config(state="disabled")
+        else:
+            self.auto_skip_chk.config(state="disabled")
+            self.auto_skip_entry.config(state="disabled")
+
+    def _on_auto_skip_toggle(self) -> None:
+        """Enable or disable threshold entry based on auto-skip checkbox."""
+        if self.auto_skip_var.get() and self.require_approval_var.get():
+            self.auto_skip_entry.config(state="normal")
+        else:
+            self.auto_skip_entry.config(state="disabled")
 
     def _log_message(self, message: str) -> None:
         """Append line to the log text widget thread-safely."""
@@ -892,23 +938,50 @@ class OrcaMatrixApp(tk.Tk):
         self.progress_bar["value"] = 0
         self.progress_lbl.config(text="Starting matrix execution...")
 
+        # Determine non_interactive and auto_confirm_under_seconds
+        require_approval = self.require_approval_var.get()
+        non_interactive = not require_approval
+
+        auto_confirm_under: Optional[float] = None
+        if require_approval and self.auto_skip_var.get():
+            try:
+                val = float(self.auto_skip_threshold_var.get().strip())
+                if val > 0:
+                    auto_confirm_under = val
+            except (ValueError, TypeError):
+                auto_confirm_under = 30.0
+
         def eta_confirm_dialog(wall_sec: float, remaining: int, est_rem_sec: float) -> bool:
             """Interactive modal asking user whether to proceed past ETA gate."""
             result_holder = [False]
             event = threading.Event()
 
             def ask() -> None:
+                if self._is_destroyed:
+                    result_holder[0] = False
+                    event.set()
+                    return
+                total_est = wall_sec + est_rem_sec
                 msg = (
-                    f"Baseline variant sliced in {wall_sec:.1f} seconds.\n\n"
-                    f"Remaining variants: {remaining}\n"
-                    f"Estimated remaining time: ~{int(est_rem_sec)}s\n\n"
+                    f"Baseline variant 1 sliced in {wall_sec:.1f}s wall-clock time.\n\n"
+                    f"Remaining variants to slice: {remaining}\n"
+                    f"Estimated remaining time: ~{format_duration(est_rem_sec)}\n"
+                    f"Estimated total time: ~{format_duration(total_est)}\n\n"
                     f"Do you want to proceed with slicing the remaining {remaining} variants?"
                 )
                 res = messagebox.askyesno("ETA Confirmation Gate", msg, parent=self)
                 result_holder[0] = res
                 event.set()
 
-            self.after(0, ask)
+            if not self._is_destroyed:
+                try:
+                    self.after(0, ask)
+                except Exception:
+                    result_holder[0] = False
+                    event.set()
+            else:
+                return False
+
             event.wait()
             return result_holder[0]
 
@@ -933,8 +1006,9 @@ class OrcaMatrixApp(tk.Tk):
                 runner = MatrixRunner(
                     client=self.client,
                     output_dir=out_dir,
-                    non_interactive=self.non_interactive_var.get(),
+                    non_interactive=non_interactive,
                     dry_run=dry_run,
+                    auto_confirm_under_seconds=auto_confirm_under,
                     log_callback=self._log_message,
                     eta_confirm_fn=eta_confirm_dialog,
                     progress_callback=progress_cb,

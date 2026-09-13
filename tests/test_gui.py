@@ -122,6 +122,36 @@ class TestOrcaMatrixApp(unittest.TestCase):
         item_w = self.app.dim_scroll_canvas.itemcget(self.app.dim_cards_window, "width")
         self.assertEqual(int(float(item_w)), 780)
 
+    def test_eta_approval_controls_toggle(self):
+        # Defaults
+        self.assertTrue(self.app.require_approval_var.get())
+        self.assertTrue(self.app.auto_skip_var.get())
+        self.assertEqual(self.app.auto_skip_threshold_var.get(), "30")
+        self.assertEqual(str(self.app.auto_skip_chk.cget("state")), "normal")
+        self.assertEqual(str(self.app.auto_skip_entry.cget("state")), "normal")
+
+        # Disable auto-skip: threshold entry should disable
+        self.app.auto_skip_var.set(False)
+        self.app._on_auto_skip_toggle()
+        self.assertEqual(str(self.app.auto_skip_entry.cget("state")), "disabled")
+
+        # Re-enable auto-skip
+        self.app.auto_skip_var.set(True)
+        self.app._on_auto_skip_toggle()
+        self.assertEqual(str(self.app.auto_skip_entry.cget("state")), "normal")
+
+        # Uncheck require approval: both auto-skip checkbox and entry should disable
+        self.app.require_approval_var.set(False)
+        self.app._on_approval_toggle()
+        self.assertEqual(str(self.app.auto_skip_chk.cget("state")), "disabled")
+        self.assertEqual(str(self.app.auto_skip_entry.cget("state")), "disabled")
+
+        # Check require approval back on: sub-controls re-enable
+        self.app.require_approval_var.set(True)
+        self.app._on_approval_toggle()
+        self.assertEqual(str(self.app.auto_skip_chk.cget("state")), "normal")
+        self.assertEqual(str(self.app.auto_skip_entry.cget("state")), "normal")
+
 
 if __name__ == "__main__":
     unittest.main()
