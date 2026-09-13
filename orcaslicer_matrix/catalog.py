@@ -124,8 +124,29 @@ CURATED_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "precise_outer_wall": {
         "category": CAT_QUALITY,
         "presets": [
-            PresetValue("true", "Enabled"),
-            PresetValue("false", "Disabled"),
+            PresetValue("1", "1 (Enabled)"),
+            PresetValue("0", "0 (Disabled)"),
+        ],
+    },
+    "enable_arc_fitting": {
+        "category": CAT_QUALITY,
+        "presets": [
+            PresetValue("1", "1 (Enabled)"),
+            PresetValue("0", "0 (Disabled)"),
+        ],
+    },
+    "only_one_wall_first_layer": {
+        "category": CAT_QUALITY,
+        "presets": [
+            PresetValue("1", "1 (Enabled)"),
+            PresetValue("0", "0 (Disabled)"),
+        ],
+    },
+    "only_one_wall_top": {
+        "category": CAT_QUALITY,
+        "presets": [
+            PresetValue("1", "1 (Enabled)"),
+            PresetValue("0", "0 (Disabled)"),
         ],
     },
     "elefant_foot_compensation": {
@@ -222,15 +243,15 @@ CURATED_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "alternate_extra_wall": {
         "category": CAT_STRENGTH,
         "presets": [
-            PresetValue("true", "Enabled"),
-            PresetValue("false", "Disabled"),
+            PresetValue("1", "1 (Enabled)"),
+            PresetValue("0", "0 (Disabled)"),
         ],
     },
     "infill_combination": {
         "category": CAT_STRENGTH,
         "presets": [
-            PresetValue("true", "Enabled (Thicker Infill)"),
-            PresetValue("false", "Disabled (Sync with Walls)"),
+            PresetValue("1", "1 (Enabled - Thicker Infill)"),
+            PresetValue("0", "0 (Disabled - Sync with Walls)"),
         ],
     },
 
@@ -299,8 +320,8 @@ CURATED_OVERRIDES: Dict[str, Dict[str, Any]] = {
     "enable_support": {
         "category": CAT_SUPPORT,
         "presets": [
-            PresetValue("true", "Enabled"),
-            PresetValue("false", "Disabled"),
+            PresetValue("1", "1 (Enabled)"),
+            PresetValue("0", "0 (Disabled)"),
         ],
     },
     "support_type": {
@@ -549,8 +570,8 @@ class DimensionCatalog:
                     presets.append(PresetValue(value=str(ev), label=str(lbl)))
             elif stype in ("coBool", "coBools"):
                 presets = [
-                    PresetValue("true", "True / Enabled"),
-                    PresetValue("false", "False / Disabled"),
+                    PresetValue("1", "1 (Enabled)"),
+                    PresetValue("0", "0 (Disabled)"),
                 ]
             elif default_val is not None and str(default_val).strip() != "":
                 presets.append(PresetValue(value=str(default_val), label=f"Default: {default_val}"))

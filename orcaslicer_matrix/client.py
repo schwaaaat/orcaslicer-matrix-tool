@@ -216,8 +216,15 @@ class OrcaClient:
         Returns:
             Dict containing 'applied' list and optional 'errors' dict.
         """
-        # Ensure all values are sent as strings
-        str_changes = {k: str(v) for k, v in changes.items()}
+        # Ensure all values are sent as strings, normalizing booleans to "1"/"0" for OrcaSlicer
+        str_changes = {}
+        for k, v in changes.items():
+            if isinstance(v, bool):
+                str_changes[k] = "1" if v else "0"
+            elif isinstance(v, str) and v.strip().lower() in ("true", "false"):
+                str_changes[k] = "1" if v.strip().lower() == "true" else "0"
+            else:
+                str_changes[k] = str(v)
         return self._request("PUT", "/api/v1/config", body=str_changes)
 
     def slice(self, retry_on_not_started: bool = True) -> Dict[str, Any]:

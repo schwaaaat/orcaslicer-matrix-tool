@@ -89,10 +89,27 @@ class TestCatalog(unittest.TestCase):
         self.assertIsNotNone(dim)
         self.assertEqual(dim.key, "accel_to_decel_enable")
         self.assertEqual(dim.type, "coBool")
-        # Should have auto-generated boolean presets
+        # Should have auto-generated boolean presets as '1' and '0'
         p_vals = [p.value for p in dim.presets]
-        self.assertIn("true", p_vals)
-        self.assertIn("false", p_vals)
+        self.assertIn("1", p_vals)
+        self.assertIn("0", p_vals)
+
+    def test_boolean_presets_are_one_and_zero(self):
+        # Arc fitting and first layer walls must use '1' and '0' for OrcaSlicer compatibility
+        arc_dim = self.catalog.get_dimension("enable_arc_fitting")
+        self.assertIsNotNone(arc_dim)
+        arc_vals = [p.value for p in arc_dim.presets]
+        self.assertEqual(arc_vals, ["1", "0"])
+
+        wall1_dim = self.catalog.get_dimension("only_one_wall_first_layer")
+        self.assertIsNotNone(wall1_dim)
+        wall1_vals = [p.value for p in wall1_dim.presets]
+        self.assertEqual(wall1_vals, ["1", "0"])
+
+        supp_dim = self.catalog.get_dimension("enable_support")
+        self.assertIsNotNone(supp_dim)
+        supp_vals = [p.value for p in supp_dim.presets]
+        self.assertEqual(supp_vals, ["1", "0"])
 
     def test_total_available_dimensions(self):
         all_dims = self.catalog.get_all_available_dimensions()

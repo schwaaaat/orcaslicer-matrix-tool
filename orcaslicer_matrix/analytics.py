@@ -12,6 +12,7 @@ Provides:
 
 from __future__ import annotations
 
+import html
 import json
 import math
 import os
@@ -147,6 +148,18 @@ def format_clean_variant_name(name: str) -> str:
                 clean_parts.append(f"{v} bottom layers")
             elif k == "enable_support":
                 clean_parts.append("support on" if v.lower() in ("1", "true") else "support off")
+            elif k == "enable_arc_fitting":
+                clean_parts.append("arc fitting on" if v.lower() in ("1", "true") else "arc fitting off")
+            elif k == "only_one_wall_first_layer":
+                clean_parts.append("1 wall first layer" if v.lower() in ("1", "true") else "std 1st layer walls")
+            elif k == "only_one_wall_top":
+                clean_parts.append("1 wall top" if v.lower() in ("1", "true") else "std top walls")
+            elif k == "precise_outer_wall":
+                clean_parts.append("precise outer on" if v.lower() in ("1", "true") else "precise outer off")
+            elif k == "alternate_extra_wall":
+                clean_parts.append("extra wall on" if v.lower() in ("1", "true") else "extra wall off")
+            elif k == "infill_combination":
+                clean_parts.append("combine infill on" if v.lower() in ("1", "true") else "combine infill off")
             elif k == "brim_type":
                 clean_parts.append(f"{v.replace('_', ' ')} brim")
             elif k == "fuzzy_skin":
@@ -412,7 +425,9 @@ def compute_matrix_comparison(
             "warnings_count": len(v.get("warnings") or []),
             "error": err,
             "filament_by_role": stats.get("filament_by_role") or {},
-            "changes": v.get("changes") or {},
+            "changes": dict(v.get("changes") or {}) or (
+                {p.split("=", 1)[0].strip(): p.split("=", 1)[1].strip() for p in v_name.split(",") if "=" in p}
+            ),
         }
         summary_rows.append(row)
 
@@ -514,14 +529,59 @@ def generate_html_report(
     rec_name = comparison.get("recommended") or "None"
     rec_reason = comparison.get("recommendation_reason") or ""
 
+    # Resolve matrix axes dictionary
+    matrix_dict: Dict[str, List[Any]] = dict(manifest_data.get("matrix") or {})
+    if not matrix_dict:
+        for r in summary_rows:
+            ch = r.get("changes") or {}
+            for k, v in ch.items():
+                if k not in matrix_dict:
+                    matrix_dict[k] = []
+                str_v = str(v)
+                if str_v not in matrix_dict[k]:
+                    matrix_dict[k].append(str_v)
+
+    axis_cards = []
+    formula_parts = []
+    for axis_key, axis_vals in matrix_dict.items():
+        friendly_label = AXIS_FRIENDLY_LABELS.get(axis_key, axis_key.replace("_", " ").title())
+        val_count = len(axis_vals)
+        formula_parts.append(str(val_count))
+        pills_html = []
+        for val in axis_vals:
+            c_val = _format_axis_value(axis_key, str(val))
+            pills_html.append(f'<span class="pill pill-option">{html.escape(c_val)}</span>')
+        pills_str = "\n            ".join(pills_html)
+        axis_cards.append(f"""        <div class="axis-card">
+          <div class="axis-header">
+            <span class="axis-name">{html.escape(friendly_label)}</span>
+            <code class="axis-key">{html.escape(axis_key)}</code>
+          </div>
+          <div class="axis-options-label">Configured Options ({val_count}):</div>
+          <div class="axis-pills">
+            {pills_str}
+          </div>
+        </div>""")
+
+    num_axes = len(matrix_dict)
+    if axis_cards:
+        axes_cards_html = "\n".join(axis_cards)
+        formula_str = " × ".join(formula_parts)
+        if len(formula_parts) > 1:
+            axes_meta_str = f"{num_axes} Axes Configured • {formula_str} = {len(summary_rows)} Variants"
+        elif num_axes == 1:
+            axes_meta_str = f"1 Axis Configured • {len(summary_rows)} Variants"
+        else:
+            axes_meta_str = f"{len(summary_rows)} Variants"
+    else:
+        axes_cards_html = '        <p style="color: var(--text-muted); font-size: 13px; font-style: italic;">No matrix axes configured (single variant execution).</p>'
+        axes_meta_str = f"{len(summary_rows)} Variant{'s' if len(summary_rows) != 1 else ''}"
+
     # Generate SVG Pareto Chart
     svg_pareto = _generate_pareto_svg(summary_rows)
 
     # Generate SVG Stacked Bar Chart
     svg_stacked_bars = _generate_stacked_bars_svg(lt_rows, columns)
-
-    # Generate 3D Matrix Lattice SVG
-    svg_3d_lattice = _generate_3d_lattice_svg(summary_rows, manifest_data.get("matrix", {}))
 
     html_content = f"""<!DOCTYPE html>
 <html lang="en">
@@ -577,6 +637,93 @@ def generate_html_report(
   }}
   .banner-title {{ font-weight: bold; color: #e0f2fe; margin-bottom: 2px; }}
   .banner-desc {{ color: #bae6fd; font-size: 13px; }}
+  .axes-grid {{
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 14px;
+    margin-top: 6px;
+  }}
+  .axis-card {{
+    background: var(--surface-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 16px;
+  }}
+  .axis-header {{
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+  }}
+  .axis-name {{
+    font-size: 13px;
+    font-weight: 700;
+    color: #f1f5f9;
+  }}
+  .axis-key {{
+    font-size: 11px;
+    color: var(--primary);
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.25);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }}
+  .axis-options-label {{
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }}
+  .axis-pills {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }}
+  .pill {{
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+  }}
+  .pill-option {{
+    background: #0f172a;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+  }}
+  .setting-tags {{
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }}
+  .setting-tag {{
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 2px 7px;
+    font-size: 11px;
+    line-height: 1.3;
+  }}
+  .tag-key {{
+    color: #94a3b8;
+    font-size: 11px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }}
+  .tag-val {{
+    color: #38bdf8;
+    font-size: 11px;
+  }}
+  .tag-none {{
+    color: var(--text-muted);
+    font-style: italic;
+    background: transparent;
+    border-style: dashed;
+  }}
   table {{ width: 100%; border-collapse: collapse; font-size: 13px; text-align: left; }}
   th {{ background: #0f172a; padding: 10px 12px; font-weight: 600; color: #cbd5e1; border-bottom: 2px solid var(--border); }}
   td {{ padding: 10px 12px; border-bottom: 1px solid var(--border); }}
@@ -614,11 +761,22 @@ def generate_html_report(
   </div>
 
   <div class="card">
-    <div class="card-title">Summary & Delta vs Baseline</div>
+    <div class="card-title">
+      <span>Matrix Axes &amp; Configured Options</span>
+      <span style="font-size: 12px; font-weight: 600; color: #94a3b8; background: #0f172a; border: 1px solid var(--border); padding: 3px 10px; border-radius: 6px;">{axes_meta_str}</span>
+    </div>
+    <div class="axes-grid">
+{axes_cards_html}
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Summary &amp; Delta vs Baseline</div>
     <table>
       <thead>
         <tr>
           <th>Variant</th>
+          <th>Settings Changed</th>
           <th>Print Time</th>
           <th>Filament</th>
           <th>Cost</th>
@@ -640,8 +798,29 @@ def generate_html_report(
 
         clean_label = r.get("clean_name") or format_clean_variant_name(r["name"])
         clean_name = clean_label + badge_html
+
+        # Render specific settings changed
+        ch = r.get("changes") or {}
+        if not ch and "=" in r.get("name", ""):
+            ch = {}
+            for part in r["name"].split(","):
+                if "=" in part:
+                    k, v = part.split("=", 1)
+                    ch[k.strip()] = v.strip()
+
+        if ch:
+            tag_items = []
+            for k, v in ch.items():
+                tag_items.append(
+                    f'<span class="setting-tag"><code class="tag-key">{html.escape(k)}:</code> <strong class="tag-val">{html.escape(str(v))}</strong></span>'
+                )
+            settings_html = f'<div class="setting-tags">{" ".join(tag_items)}</div>'
+        else:
+            settings_html = '<span class="setting-tag tag-none">Baseline (Default)</span>'
+
         html_content += f"""        <tr>
           <td><strong>{clean_name}</strong></td>
+          <td>{settings_html}</td>
           <td>{r['print_time']}</td>
           <td>{r['filament']}</td>
           <td>{r['cost']}</td>
@@ -698,16 +877,6 @@ def generate_html_report(
     <div class="card-title">Filament Extrusion Breakdown by Role</div>
     <div class="chart-box">
       {svg_stacked_bars}
-    </div>
-  </div>
-
-  <div class="card">
-    <div class="card-title">3D Matrix Lattice (3-Axis Settings Hypercube)</div>
-    <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 10px;">
-      Isometric 3D projection of matrix dimensions and variants. Each sphere represents a unique parameter combination in 3-dimensional settings space.
-    </p>
-    <div class="chart-box" style="text-align: center;">
-      {svg_3d_lattice}
     </div>
   </div>
 
@@ -946,196 +1115,74 @@ def _generate_stacked_bars_svg(
     return svg
 
 
-def _generate_3d_lattice_svg(
-    summary_rows: List[Dict[str, Any]],
-    matrix_dict: Optional[Dict[str, List[str]]] = None,
-) -> str:
-    """Generate inline SVG for an isometric 3D wireframe lattice representing the multi-axis settings."""
-    if not summary_rows:
-        return "<p style='color:#94a3b8;'>No variants to plot in 3D.</p>"
+AXIS_FRIENDLY_LABELS: Dict[str, str] = {
+    "layer_height": "Layer Height",
+    "initial_layer_height": "Initial Layer Height",
+    "wall_loops": "Wall Loops",
+    "sparse_infill_density": "Sparse Infill Density",
+    "sparse_infill_pattern": "Sparse Infill Pattern",
+    "wall_generator": "Wall Generator",
+    "seam_position": "Seam Position",
+    "outer_wall_speed": "Outer Wall Speed",
+    "inner_wall_speed": "Inner Wall Speed",
+    "sparse_infill_speed": "Sparse Infill Speed",
+    "top_surface_speed": "Top Surface Speed",
+    "travel_speed": "Travel Speed",
+    "outer_wall_acceleration": "Outer Wall Acceleration",
+    "top_shell_layers": "Top Shell Layers",
+    "bottom_shell_layers": "Bottom Shell Layers",
+    "top_solid_layers": "Top Solid Layers",
+    "bottom_solid_layers": "Bottom Solid Layers",
+    "enable_support": "Enable Support",
+    "support_type": "Support Type",
+    "support_style": "Support Style",
+    "support_threshold_angle": "Support Threshold Angle",
+    "support_top_z_distance": "Support Top Z Distance",
+    "brim_type": "Brim Type",
+    "brim_width": "Brim Width",
+    "fuzzy_skin": "Fuzzy Skin",
+    "enable_arc_fitting": "Arc Fitting",
+    "only_one_wall_first_layer": "1 Wall on First Layer",
+    "only_one_wall_top": "1 Wall on Top Surface",
+    "precise_outer_wall": "Precise Outer Wall",
+    "alternate_extra_wall": "Alternate Extra Wall",
+    "infill_combination": "Combine Infill",
+    "line_width": "Line Width",
+    "outer_wall_line_width": "Outer Wall Line Width",
+    "pressure_advance": "Pressure Advance",
+    "retraction_length": "Retraction Length",
+    "nozzle_temperature": "Nozzle Temperature",
+    "hot_plate_temp": "Bed Temperature",
+    "fan_max_speed": "Fan Max Speed",
+    "fan_min_speed": "Fan Min Speed",
+    "ironing_type": "Ironing Type",
+    "ironing_speed": "Ironing Speed",
+    "ironing_flow": "Ironing Flow",
+    "elefant_foot_compensation": "Elephant Foot Compensation",
+}
 
-    # Discover axis names and values
-    axis_values_map: Dict[str, List[str]] = dict(matrix_dict or {})
-    if not axis_values_map:
-        for r in summary_rows:
-            ch = r.get("changes") or {}
-            if not ch:
-                for part in r["name"].split(","):
-                    if "=" in part:
-                        k, v = part.split("=", 1)
-                        ch[k.strip()] = v.strip()
-            for k, v in ch.items():
-                if k not in axis_values_map:
-                    axis_values_map[k] = []
-                if v not in axis_values_map[k]:
-                    axis_values_map[k].append(v)
 
-    axis_keys = list(axis_values_map.keys())
-    has_true_3d = len(axis_keys) >= 3
-
-    axis_x_name = axis_keys[0] if len(axis_keys) > 0 else "Dimension A"
-    axis_y_name = axis_keys[1] if len(axis_keys) > 1 else ("Filament Mass" if not has_true_3d else "Dimension B")
-    axis_z_name = axis_keys[2] if len(axis_keys) > 2 else "Print Time"
-
-    width, height = 760, 360
-    cx = width / 2
-    cy = height / 2 + 10
-    scale = 120.0
-
-    # Isometric rotation angles (24 deg pitch, -38 deg yaw)
-    rad_pitch = math.radians(24.0)
-    rad_yaw = math.radians(-38.0)
-    cos_y, sin_y = math.cos(rad_yaw), math.sin(rad_yaw)
-    cos_p, sin_p = math.cos(rad_pitch), math.sin(rad_pitch)
-
-    def project_3d(x: float, y: float, z: float) -> Tuple[float, float, float]:
-        rx = x * cos_y - y * sin_y
-        ry = x * sin_y + y * cos_y
-        rz = z
-        x2 = rx
-        y2 = ry * cos_p - rz * sin_p
-        z2 = ry * sin_p + rz * cos_p
-        sx = cx + x2 * scale
-        sy = cy - z2 * scale
-        return sx, sy, y2
-
-    c_min, c_max = -0.85, 0.85
-    corners = [
-        (c_min, c_min, c_min), (c_max, c_min, c_min), (c_max, c_max, c_min), (c_min, c_max, c_min),
-        (c_min, c_min, c_max), (c_max, c_min, c_max), (c_max, c_max, c_max), (c_min, c_max, c_max),
-    ]
-    box_edges = [
-        (0, 1), (1, 2), (2, 3), (3, 0),
-        (4, 5), (5, 6), (6, 7), (7, 4),
-        (0, 4), (1, 5), (2, 6), (3, 7),
-    ]
-
-    svg = f"""<svg viewBox="0 0 {width} {height}" style="width: 100%; max-width: 800px; height: auto;">
-  <!-- 3D Bounding Box Wireframe -->
-"""
-    for e1, e2 in box_edges:
-        sx1, sy1, _ = project_3d(*corners[e1])
-        sx2, sy2, _ = project_3d(*corners[e2])
-        svg += f"""  <line x1="{sx1:.1f}" y1="{sy1:.1f}" x2="{sx2:.1f}" y2="{sy2:.1f}" stroke="#334155" stroke-width="1" stroke-dasharray="3,3"/>\n"""
-
-    # 3D Coordinate Rays
-    ox, oy, oz = c_min, c_min, c_min
-    s_ox, s_oy, _ = project_3d(ox, oy, oz)
-
-    s_xx, s_xy, _ = project_3d(1.15, oy, oz)
-    label_x = format_compact_label(f"{axis_x_name}=X").replace("=X", "").replace(":X", "") or axis_x_name[:12]
-    svg += f"""  <!-- X Axis -->
-  <line x1="{s_ox:.1f}" y1="{s_oy:.1f}" x2="{s_xx:.1f}" y2="{s_xy:.1f}" stroke="#f43f5e" stroke-width="2"/>
-  <text x="{s_xx + 6:.1f}" y="{s_xy + 4:.1f}" fill="#f43f5e" font-size="11" font-weight="700">[X] {label_x}</text>
-"""
-
-    s_yx, s_yy, _ = project_3d(ox, 1.15, oz)
-    label_y = format_compact_label(f"{axis_y_name}=Y").replace("=Y", "").replace(":Y", "") or axis_y_name[:12]
-    svg += f"""  <!-- Y Axis -->
-  <line x1="{s_ox:.1f}" y1="{s_oy:.1f}" x2="{s_yx:.1f}" y2="{s_yy:.1f}" stroke="#10b981" stroke-width="2"/>
-  <text x="{s_yx:.1f}" y="{s_yy - 8:.1f}" fill="#10b981" font-size="11" font-weight="700" text-anchor="middle">[Y] {label_y}</text>
-"""
-
-    s_zx, s_zy, _ = project_3d(ox, oy, 1.15)
-    label_z = format_compact_label(f"{axis_z_name}=Z").replace("=Z", "").replace(":Z", "") or axis_z_name[:12]
-    svg += f"""  <!-- Z Axis -->
-  <line x1="{s_ox:.1f}" y1="{s_oy:.1f}" x2="{s_zx:.1f}" y2="{s_zy:.1f}" stroke="#38bdf8" stroke-width="2"/>
-  <text x="{s_zx:.1f}" y="{s_zy - 8:.1f}" fill="#38bdf8" font-size="11" font-weight="700" text-anchor="middle">[Z] {label_z}</text>
-"""
-
-    # Map variants
-    nodes = []
-    all_times = [r["time_s"] for r in summary_rows if r.get("time_s")]
-    all_masses = [r["filament_g"] for r in summary_rows if r.get("filament_g")]
-    min_t, max_t = (min(all_times), max(all_times)) if all_times else (1, 100)
-    min_m, max_m = (min(all_masses), max(all_masses)) if all_masses else (1, 100)
-
-    for r in summary_rows:
-        ch = r.get("changes") or {}
-        if not ch:
-            for part in r["name"].split(","):
-                if "=" in part:
-                    k, v = part.split("=", 1)
-                    ch[k.strip()] = v.strip()
-
-        if axis_x_name in ch and axis_x_name in axis_values_map and len(axis_values_map[axis_x_name]) > 1:
-            vx = ch[axis_x_name]
-            idx_x = axis_values_map[axis_x_name].index(vx) if vx in axis_values_map[axis_x_name] else 0
-            nx = c_min + (1.7 * idx_x / max(1, len(axis_values_map[axis_x_name]) - 1))
-        else:
-            nx = 0.0
-
-        if has_true_3d:
-            if axis_y_name in ch and axis_y_name in axis_values_map and len(axis_values_map[axis_y_name]) > 1:
-                vy = ch[axis_y_name]
-                idx_y = axis_values_map[axis_y_name].index(vy) if vy in axis_values_map[axis_y_name] else 0
-                ny = c_min + (1.7 * idx_y / max(1, len(axis_values_map[axis_y_name]) - 1))
-            else:
-                ny = 0.0
-        elif len(axis_keys) > 1 and axis_y_name in ch and axis_y_name in axis_values_map and len(axis_values_map[axis_y_name]) > 1:
-            vy = ch[axis_y_name]
-            idx_y = axis_values_map[axis_y_name].index(vy) if vy in axis_values_map[axis_y_name] else 0
-            ny = c_min + (1.7 * idx_y / max(1, len(axis_values_map[axis_y_name]) - 1))
-        else:
-            fil_g = r.get("filament_g") or min_m
-            ny = c_min + (1.7 * (fil_g - min_m) / max(0.01, max_m - min_m))
-
-        if has_true_3d:
-            if axis_z_name in ch and axis_z_name in axis_values_map and len(axis_values_map[axis_z_name]) > 1:
-                vz = ch[axis_z_name]
-                idx_z = axis_values_map[axis_z_name].index(vz) if vz in axis_values_map[axis_z_name] else 0
-                nz = c_min + (1.7 * idx_z / max(1, len(axis_values_map[axis_z_name]) - 1))
-            else:
-                nz = 0.0
-        else:
-            time_val = r.get("time_s") or min_t
-            nz = c_min + (1.7 * (time_val - min_t) / max(0.01, max_t - min_t))
-
-        sx, sy, depth = project_3d(nx, ny, nz)
-        nodes.append({"sx": sx, "sy": sy, "depth": depth, "variant": r})
-
-    # Sort depth ascending
-    nodes.sort(key=lambda item: item["depth"])
-
-    for item in nodes:
-        sx, sy = item["sx"], item["sy"]
-        v = item["variant"]
-        depth = item["depth"]
-
-        is_base = v.get("is_baseline", False)
-        is_fast = v.get("is_fastest", False)
-        is_rec = v.get("is_recommended", False)
-
-        if is_rec:
-            col = "#10b981"
-        elif is_fast:
-            col = "#fbbf24"
-        elif is_base:
-            col = "#3b82f6"
-        else:
-            col = "#38bdf8"
-
-        r_size = max(5, int(6.5 + (depth + 1.2) * 2.0))
-        lbl = format_compact_label(v["name"])
-        if is_rec:
-            lbl += " ★ rec"
-        elif is_fast:
-            lbl += " ★"
-        elif is_base:
-            lbl += " (base)"
-
-        tooltip = f"{v['name']}&#10;Time: {v.get('print_time', '-')}&#10;Filament: {v.get('filament', '-')}&#10;Cost: {v.get('cost', '-')}&#10;vs Base: {v.get('vs_baseline', '-')}"
-
-        svg += f"""  <g>
-    <circle cx="{sx:.1f}" cy="{sy:.1f}" r="{r_size}" fill="{col}" stroke="#0f172a" stroke-width="2">
-      <title>{tooltip}</title>
-    </circle>
-    <circle cx="{sx - r_size * 0.3:.1f}" cy="{sy - r_size * 0.3:.1f}" r="{r_size * 0.35:.1f}" fill="#ffffff" opacity="0.6"/>
-    <text x="{sx + r_size + 5:.1f}" y="{sy + 4:.1f}" fill="#f8fafc" font-size="10" font-weight="600">{lbl}</text>
-  </g>
-"""
-
-    svg += "</svg>"
-    return svg
+def _format_axis_value(key: str, val: str) -> str:
+    """Format an axis option value for clean readability."""
+    s = str(val).strip()
+    if key in ("layer_height", "initial_layer_height"):
+        return f"{s}mm" if not s.endswith("mm") else s
+    if key == "wall_loops":
+        return f"{s} walls" if s != "1" else "1 wall"
+    if key == "sparse_infill_density":
+        return f"{s} infill" if not s.endswith("%") and not s.endswith("infill") else (s if s.endswith("infill") else f"{s} infill")
+    if key in ("outer_wall_speed", "inner_wall_speed", "sparse_infill_speed", "top_surface_speed", "travel_speed", "ironing_speed"):
+        return f"{s}mm/s" if not s.endswith("mm/s") else s
+    if key == "outer_wall_acceleration":
+        return f"{s}mm/s²" if not s.endswith("mm/s²") else s
+    if key in ("top_shell_layers", "bottom_shell_layers", "top_solid_layers", "bottom_solid_layers"):
+        return f"{s} layers"
+    if key in ("enable_support", "enable_arc_fitting", "only_one_wall_first_layer", "only_one_wall_top", "precise_outer_wall", "alternate_extra_wall", "infill_combination"):
+        return "1 (Enabled)" if s in ("1", "true") else "0 (Disabled)"
+    if key in ("nozzle_temperature", "hot_plate_temp"):
+        return f"{s}°C" if not s.endswith("°C") else s
+    if key in ("line_width", "outer_wall_line_width", "support_top_z_distance", "retraction_length", "elefant_foot_compensation"):
+        return f"{s}mm" if not s.endswith("mm") else s
+    return s
 
 

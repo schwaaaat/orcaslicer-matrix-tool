@@ -5,7 +5,6 @@ import unittest
 from pathlib import Path
 
 from orcaslicer_matrix.analytics import (
-    _generate_3d_lattice_svg,
     compute_matrix_comparison,
     format_clean_variant_name,
     format_compact_label,
@@ -296,80 +295,95 @@ class TestHtmlReportGeneration(unittest.TestCase):
             self.assertIn("OrcaSlicer Matrix Comparison Report", content)
             self.assertIn("Bambu Lab P1S 0.4 nozzle", content)
             self.assertIn("Pareto Frontier: Print Time vs Filament Mass", content)
-            self.assertIn("3D Matrix Lattice", content)
+            self.assertIn("Matrix Axes &amp; Configured Options", content)
+            self.assertIn("Settings Changed", content)
+            self.assertNotIn("3D Matrix Lattice", content)
             self.assertIn("<svg", content)
 
 
-class TestLattice3DVisualization(unittest.TestCase):
-    def test_empty_rows(self):
-        svg = _generate_3d_lattice_svg([], {})
-        self.assertIn("No variants to plot in 3D", svg)
-
-    def test_3d_lattice_svg_generation(self):
-        summary_rows = [
-            {
-                "name": "layer_height=0.16, wall_loops=2, sparse_infill_density=15%",
-                "display_name": "v1 (baseline)",
-                "print_time": "1h 00m",
-                "time_s": 3600,
-                "filament": "45.0 g",
-                "filament_g": 45.0,
-                "cost": "$0.90",
-                "cost_usd": 0.90,
-                "vs_baseline": "-",
-                "is_baseline": True,
-                "is_fastest": False,
-                "is_recommended": False,
-                "changes": {"layer_height": "0.16", "wall_loops": "2", "sparse_infill_density": "15%"},
-            },
-            {
-                "name": "layer_height=0.20, wall_loops=3, sparse_infill_density=20%",
-                "display_name": "v2",
-                "print_time": "45m",
-                "time_s": 2700,
-                "filament": "42.0 g",
-                "filament_g": 42.0,
-                "cost": "$0.84",
-                "cost_usd": 0.84,
-                "vs_baseline": "-15m, -3.0g",
-                "is_baseline": False,
-                "is_fastest": True,
-                "is_recommended": True,
-                "changes": {"layer_height": "0.20", "wall_loops": "3", "sparse_infill_density": "20%"},
-            },
-        ]
-        matrix_dict = {
-            "layer_height": ["0.16", "0.20"],
-            "wall_loops": ["2", "3"],
-            "sparse_infill_density": ["15%", "20%"],
-        }
-        svg = _generate_3d_lattice_svg(summary_rows, matrix_dict)
-        self.assertIn("<svg", svg)
-        self.assertIn("stroke-dasharray=\"3,3\"", svg)  # Bounding box wireframe
-        self.assertIn("[X]", svg)
-        self.assertIn("[Y]", svg)
-        self.assertIn("[Z]", svg)
-        self.assertIn("<circle", svg)
-        self.assertIn("<title>", svg)
-        self.assertIn("rec", svg)
-
-    def test_single_value_axis_no_zero_division(self):
-        summary_rows = [
-            {
-                "name": "layer_height=0.20, wall_loops=2",
-                "time_s": 3000,
-                "filament_g": 40.0,
-                "changes": {"layer_height": "0.20", "wall_loops": "2"},
+class TestMatrixAxesAndSettingsReport(unittest.TestCase):
+    def test_matrix_axes_and_settings_changed_in_html(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            out_file = Path(tmp_dir) / "report.html"
+            manifest_data = {
+                "source": {
+                    "app": "OrcaSlicer",
+                    "app_version": "2.4.2",
+                    "printer_preset": "Bambu Lab P1S 0.4 nozzle",
+                    "print_preset": "0.20mm Standard",
+                    "filament_preset": "Generic PLA",
+                    "plate_objects": ["Model.stl"],
+                },
+                "matrix": {
+                    "layer_height": ["0.16", "0.20"],
+                    "wall_loops": ["2", "3"],
+                },
             }
-        ]
-        matrix_dict = {
-            "layer_height": ["0.20"],  # Single value: len - 1 == 0
-            "wall_loops": ["2"],        # Single value
-        }
-        # Must execute without ZeroDivisionError
-        svg = _generate_3d_lattice_svg(summary_rows, matrix_dict)
-        self.assertIn("<svg", svg)
-        self.assertIn("[X]", svg)
+            summary_rows = [
+                {
+                    "name": "layer_height=0.16, wall_loops=2",
+                    "display_name": "0.16mm / 2 walls (baseline)",
+                    "print_time": "1h 00m",
+                    "time_s": 3600,
+                    "filament": "45.0 g",
+                    "filament_g": 45.0,
+                    "cost": "$0.90",
+                    "cost_usd": 0.90,
+                    "vs_baseline": "-",
+                    "is_baseline": True,
+                    "is_fastest": False,
+                    "is_lightest": False,
+                    "is_recommended": False,
+                    "changes": {"layer_height": "0.16", "wall_loops": "2"},
+                },
+                {
+                    "name": "layer_height=0.20, wall_loops=3",
+                    "display_name": "0.20mm / 3 walls ★ fastest",
+                    "print_time": "45m",
+                    "time_s": 2700,
+                    "filament": "42.0 g",
+                    "filament_g": 42.0,
+                    "cost": "$0.84",
+                    "cost_usd": 0.84,
+                    "vs_baseline": "-15m, -3.0g",
+                    "is_baseline": False,
+                    "is_fastest": True,
+                    "is_lightest": True,
+                    "is_recommended": True,
+                    "changes": {"layer_height": "0.20", "wall_loops": "3"},
+                },
+            ]
+            comparison = {
+                "baseline": "layer_height=0.16, wall_loops=2",
+                "recommended": "layer_height=0.20, wall_loops=3",
+                "recommendation_reason": "Fastest and lowest filament.",
+                "summary_rows": summary_rows,
+                "line_type_matrix": {"columns": [], "rows": []},
+            }
+
+            path = generate_html_report(manifest_data, comparison, out_file)
+            self.assertTrue(path.is_file())
+            content = path.read_text(encoding="utf-8")
+
+            # Verify Matrix Axes card & options
+            self.assertIn("Matrix Axes &amp; Configured Options", content)
+            self.assertIn("Layer Height", content)
+            self.assertIn("layer_height", content)
+            self.assertIn("Wall Loops", content)
+            self.assertIn("wall_loops", content)
+            self.assertIn("0.16mm", content)
+            self.assertIn("0.20mm", content)
+            self.assertIn("2 walls", content)
+            self.assertIn("3 walls", content)
+            self.assertIn("2 Axes Configured", content)
+
+            # Verify Settings Changed column in summary table
+            self.assertIn("<th>Settings Changed</th>", content)
+            self.assertIn("layer_height:", content)
+            self.assertIn("wall_loops:", content)
+
+            # Verify 3D cube is removed
+            self.assertNotIn("3D Matrix Lattice", content)
 
 
 if __name__ == "__main__":
