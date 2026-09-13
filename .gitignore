@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Slicer matrix outputs
+compare_output/
+live_compare_run/
+test_restore_run/
+test_run/
+*.gcode

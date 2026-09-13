@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "orcaslicer-matrix"
+version = "1.0.0"
+description = "Standalone, token-free matrix slicer and compare manifest generator for OrcaSlicer"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "OrcaSlicer Contributors" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Multimedia :: Graphics :: 3D Modeling",
+]
+
+[project.scripts]
+orcaslicer-matrix = "orcaslicer_matrix.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["orcaslicer_matrix*"]
+
+[tool.setuptools.package-data]
+"*" = ["print_settings_schema.json"]
