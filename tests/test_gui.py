@@ -354,6 +354,105 @@ class TestOrcaMatrixApp(unittest.TestCase):
             self.assertEqual(len(self.app.summary_tree.get_children()), 1)
             self.assertEqual(len(self.app.line_type_tree.get_children()), 1)
 
+    def test_parse_sort_key(self):
+        self.assertEqual(self.app._parse_sort_key("0.84g"), (1, 0.84, ""))
+        self.assertEqual(self.app._parse_sort_key("5.4g"), (1, 5.4, ""))
+        self.assertEqual(self.app._parse_sort_key("$1.08"), (1, 1.08, ""))
+        self.assertEqual(self.app._parse_sort_key("1h 00m"), (1, 3600.0, ""))
+        self.assertEqual(self.app._parse_sort_key("45s"), (1, 45.0, ""))
+        self.assertEqual(self.app._parse_sort_key("15%"), (1, 15.0, ""))
+        self.assertEqual(self.app._parse_sort_key("-"), (3, 0.0, ""))
+        self.assertEqual(self.app._parse_sort_key("0.16mm / 2 walls"), (2, 0.0, "0.16mm / 2 walls"))
+
+    def test_treeview_column_sorting_and_clean_names(self):
+        comparison = {
+            "summary_rows": [
+                {
+                    "name": "layer_height=0.16, wall_loops=2",
+                    "display_name": "0.16mm / 2 walls (baseline)",
+                    "print_time": "1h 00m",
+                    "time_s": 3600,
+                    "filament": "50.0 g",
+                    "cost": "$1.00",
+                    "vs_baseline": "-",
+                },
+                {
+                    "name": "layer_height=0.20, wall_loops=3",
+                    "display_name": "0.20mm / 3 walls ★ fastest",
+                    "print_time": "45m",
+                    "time_s": 2700,
+                    "filament": "42.0 g",
+                    "cost": "$0.84",
+                    "vs_baseline": "-15m, -8.0g",
+                },
+            ],
+            "line_type_matrix": {
+                "columns": ["Inner wall", "Outer wall"],
+                "rows": [
+                    {
+                        "name": "layer_height=0.16, wall_loops=2",
+                        "clean_name": "0.16mm / 2 walls",
+                        "roles": {"Inner wall": 0.02, "Outer wall": 0.84},
+                        "total_g": 5.4,
+                    },
+                    {
+                        "name": "layer_height=0.16, wall_loops=3",
+                        "clean_name": "0.16mm / 3 walls",
+                        "roles": {"Inner wall": 0.04, "Outer wall": 1.01},
+                        "total_g": 6.2,
+                    },
+                    {
+                        "name": "layer_height=0.20, wall_loops=2",
+                        "clean_name": "0.20mm / 2 walls",
+                        "roles": {"Inner wall": 0.02, "Outer wall": 0.73},
+                        "total_g": 5.3,
+                    },
+                ],
+            },
+        }
+
+        self.app._populate_results_dashboard(comparison, Path("test/manifest.json"))
+
+        # 1. Verify clean text in line_type_tree first column (not layer_height=0.16...)
+        lt_items = self.app.line_type_tree.get_children()
+        self.assertEqual(len(lt_items), 3)
+        first_row_vals = self.app.line_type_tree.item(lt_items[0])["values"]
+        self.assertEqual(first_row_vals[0], "0.16mm / 2 walls")
+        self.assertNotIn("layer_height=", first_row_vals[0])
+
+        # 2. Test click-to-sort on "total" column
+        # Click 1: Ascending sort (5.3g, 5.4g, 6.2g)
+        self.app.tk.call(self.app.line_type_tree.heading("total", "command"))
+
+        items_asc = self.app.line_type_tree.get_children()
+        asc_totals = [self.app.line_type_tree.item(i)["values"][-1] for i in items_asc]
+        self.assertEqual(asc_totals, ["5.3g", "5.4g", "6.2g"])
+        self.assertIn("▲", self.app.line_type_tree.heading("total", "text"))
+
+        # Click 2: Descending sort (6.2g, 5.4g, 5.3g)
+        self.app.tk.call(self.app.line_type_tree.heading("total", "command"))
+        items_desc = self.app.line_type_tree.get_children()
+        desc_totals = [self.app.line_type_tree.item(i)["values"][-1] for i in items_desc]
+        self.assertEqual(desc_totals, ["6.2g", "5.4g", "5.3g"])
+        self.assertIn("▼", self.app.line_type_tree.heading("total", "text"))
+
+        # 3. Test click-to-sort on "variant" column (alphabetical)
+        self.app.tk.call(self.app.line_type_tree.heading("variant", "command"))
+        items_var_asc = self.app.line_type_tree.get_children()
+        var_names = [self.app.line_type_tree.item(i)["values"][0] for i in items_var_asc]
+        self.assertEqual(var_names, sorted(var_names))
+        self.assertIn("▲", self.app.line_type_tree.heading("variant", "text"))
+        self.assertNotIn("▼", self.app.line_type_tree.heading("total", "text"))
+        self.assertNotIn("▲", self.app.line_type_tree.heading("total", "text"))
+
+        # 4. Test summary_tree sorting by time
+        sum_items = self.app.summary_tree.get_children()
+        self.assertEqual(len(sum_items), 2)
+        self.app.tk.call(self.app.summary_tree.heading("time", "command"))
+        items_time_asc = self.app.summary_tree.get_children()
+        time_vals = [self.app.summary_tree.item(i)["values"][1] for i in items_time_asc]
+        self.assertEqual(time_vals, ["45m", "1h 00m"])
+
 
 if __name__ == "__main__":
     unittest.main()

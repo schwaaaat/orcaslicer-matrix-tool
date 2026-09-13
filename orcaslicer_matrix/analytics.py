@@ -106,6 +106,58 @@ def format_compact_label(name: str) -> str:
     return " • ".join(short_parts)
 
 
+def format_clean_variant_name(name: str) -> str:
+    """Turn verbose 'layer_height=0.16, wall_loops=2' into clean '0.16mm / 2 walls'.
+
+    Translates slicer setting keys into clean, human-readable labels matching the
+    user's requested table style.
+    """
+    if not name:
+        return ""
+    parts = [p.strip() for p in name.split(",") if p.strip()]
+    clean_parts: List[str] = []
+    for part in parts:
+        if "=" in part:
+            k, v = part.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if k == "layer_height":
+                clean_parts.append(f"{v}mm" if not v.endswith("mm") else v)
+            elif k == "wall_loops":
+                clean_parts.append(f"{v} walls" if v != "1" else "1 wall")
+            elif k == "sparse_infill_density":
+                clean_parts.append(f"{v} infill" if not v.endswith("infill") else v)
+            elif k == "sparse_infill_pattern":
+                clean_parts.append(v.replace("_", " "))
+            elif k == "wall_generator":
+                clean_parts.append(v.capitalize())
+            elif k == "seam_position":
+                clean_parts.append(f"{v} seam")
+            elif k == "outer_wall_speed":
+                clean_parts.append(f"{v}mm/s outer wall")
+            elif k == "inner_wall_speed":
+                clean_parts.append(f"{v}mm/s inner wall")
+            elif k == "sparse_infill_speed":
+                clean_parts.append(f"{v}mm/s infill")
+            elif k == "top_surface_speed":
+                clean_parts.append(f"{v}mm/s top surface")
+            elif k == "top_solid_layers":
+                clean_parts.append(f"{v} top layers")
+            elif k == "bottom_solid_layers":
+                clean_parts.append(f"{v} bottom layers")
+            elif k == "enable_support":
+                clean_parts.append("support on" if v.lower() in ("1", "true") else "support off")
+            elif k == "brim_type":
+                clean_parts.append(f"{v.replace('_', ' ')} brim")
+            elif k == "fuzzy_skin":
+                clean_parts.append(f"fuzzy: {v}")
+            else:
+                k_clean = k.replace("_", " ")
+                clean_parts.append(f"{k_clean}: {v}")
+        else:
+            clean_parts.append(part)
+    return " / ".join(clean_parts)
+
 
 def format_duration(seconds: Optional[float]) -> str:
     """Format duration in seconds into 'Xh Ym' or 'Ym' or 'Zs'."""
@@ -322,7 +374,8 @@ def compute_matrix_comparison(
         elif is_lightest:
             badge_parts.append("★ lightest")
 
-        display_name = f"{v_name} {' '.join(badge_parts)}".strip()
+        clean_name = format_clean_variant_name(v_name)
+        display_name = f"{clean_name} {' '.join(badge_parts)}".strip()
 
         # Delta calculation
         delta_str = "-"
@@ -341,6 +394,7 @@ def compute_matrix_comparison(
 
         row = {
             "name": v_name,
+            "clean_name": clean_name,
             "display_name": display_name,
             "print_time": time_str,
             "time_s": time_s,
@@ -380,6 +434,7 @@ def compute_matrix_comparison(
         role_vals = {role: row["filament_by_role"].get(role, 0.0) for role in ordered_roles}
         line_type_rows.append({
             "name": row["name"],
+            "clean_name": row["clean_name"],
             "display_name": row["display_name"],
             "roles": role_vals,
             "total_g": row["filament_g"] or 0.0,
@@ -409,8 +464,9 @@ def compute_matrix_comparison(
             f"|---|{'---|' * len(ordered_roles)}",
         ]
         for r in line_type_rows:
+            c_name = r.get("clean_name") or format_clean_variant_name(r["name"])
             vals = [f"{r['roles'].get(role, 0.0):.2f}" for role in ordered_roles]
-            lt_md_lines.append(f"| {r['name']} | {' | '.join(vals)} |")
+            lt_md_lines.append(f"| {c_name} | {' | '.join(vals)} |")
         line_type_markdown = "\n".join(lt_md_lines)
     else:
         line_type_markdown = ""
@@ -582,7 +638,8 @@ def generate_html_report(
         elif r["is_lightest"]:
             badge_html = ' <span class="badge badge-light">★ lightest</span>'
 
-        clean_name = r["name"] + badge_html
+        clean_label = r.get("clean_name") or format_clean_variant_name(r["name"])
+        clean_name = clean_label + badge_html
         html_content += f"""        <tr>
           <td><strong>{clean_name}</strong></td>
           <td>{r['print_time']}</td>
@@ -614,7 +671,8 @@ def generate_html_report(
         <tbody>
 """
         for r in lt_rows:
-            html_content += f"          <tr>\n            <td><strong>{r['name']}</strong></td>\n"
+            c_name = r.get("clean_name") or format_clean_variant_name(r["name"])
+            html_content += f"          <tr>\n            <td><strong>{c_name}</strong></td>\n"
             for col in columns:
                 val = r["roles"].get(col, 0.0)
                 html_content += f"            <td>{val:.2f}g</td>\n"
@@ -657,6 +715,34 @@ def generate_html_report(
     Generated by OrcaSlicer Matrix Tool • Manifest: <code>manifest.json</code>
   </footer>
 </div>
+<script>
+document.querySelectorAll('th').forEach(header => {{
+  header.style.cursor = 'pointer';
+  header.title = 'Click to sort';
+  header.addEventListener('click', () => {{
+    const table = header.closest('table');
+    const tbody = table.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    const colIdx = Array.from(header.parentNode.children).indexOf(header);
+    const isAsc = header.dataset.sort !== 'asc';
+    header.parentNode.querySelectorAll('th').forEach(th => {{
+      delete th.dataset.sort;
+      th.innerHTML = th.innerHTML.replace(/ [▲▼]/, '');
+    }});
+    header.dataset.sort = isAsc ? 'asc' : 'desc';
+    header.innerHTML += isAsc ? ' ▲' : ' ▼';
+    rows.sort((a, b) => {{
+      const aText = a.children[colIdx].innerText.trim();
+      const bText = b.children[colIdx].innerText.trim();
+      const aNum = parseFloat(aText.replace(/[^0-9.-]/g, ''));
+      const bNum = parseFloat(bText.replace(/[^0-9.-]/g, ''));
+      if (!isNaN(aNum) && !isNaN(bNum)) return isAsc ? aNum - bNum : bNum - aNum;
+      return isAsc ? aText.localeCompare(bText) : bText.localeCompare(aText);
+    }});
+    rows.forEach(r => tbody.appendChild(r));
+  }});
+}});
+</script>
 </body>
 </html>
 """

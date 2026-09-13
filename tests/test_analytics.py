@@ -7,6 +7,7 @@ from pathlib import Path
 from orcaslicer_matrix.analytics import (
     _generate_3d_lattice_svg,
     compute_matrix_comparison,
+    format_clean_variant_name,
     format_compact_label,
     format_duration,
     generate_html_report,
@@ -53,6 +54,20 @@ class TestAnalyticsHelpers(unittest.TestCase):
         self.assertEqual(format_compact_label("sparse_infill_density=15%"), "15%")
         self.assertEqual(format_compact_label("wall_generator=arachne"), "arac")
         self.assertEqual(format_compact_label("seam_position=aligned"), "seam:ali")
+
+    def test_format_clean_variant_name(self):
+        self.assertEqual(format_clean_variant_name(""), "")
+        self.assertEqual(format_clean_variant_name("plain_text"), "plain_text")
+        self.assertEqual(format_clean_variant_name("layer_height=0.16"), "0.16mm")
+        self.assertEqual(format_clean_variant_name("layer_height=0.16, wall_loops=2"), "0.16mm / 2 walls")
+        self.assertEqual(format_clean_variant_name("layer_height=0.20, wall_loops=1"), "0.20mm / 1 wall")
+        self.assertEqual(
+            format_clean_variant_name("layer_height=0.20, wall_loops=3, sparse_infill_density=15%"),
+            "0.20mm / 3 walls / 15% infill",
+        )
+        self.assertEqual(format_clean_variant_name("wall_generator=arachne"), "Arachne")
+        self.assertEqual(format_clean_variant_name("seam_position=aligned"), "aligned seam")
+        self.assertEqual(format_clean_variant_name("sparse_infill_pattern=gyroid"), "gyroid")
 
     def test_get_role_color(self):
         c_wall = get_role_color("Inner wall")

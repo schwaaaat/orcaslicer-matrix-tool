@@ -10,12 +10,13 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -33,7 +34,7 @@ from .matrix import (
 )
 from .runner import MatrixRunner, format_duration
 from .cli import find_viewer_executable, launch_compare_viewer
-from .analytics import ROLE_COLORS, format_compact_label, get_role_color
+from .analytics import ROLE_COLORS, format_clean_variant_name, format_compact_label, get_role_color
 
 
 # Enable DPI awareness on Windows if available
@@ -572,15 +573,25 @@ class OrcaMatrixApp(tk.Tk):
         self.tab_preview = ttk.Frame(self.results_notebook, padding="4")
         self.results_notebook.add(self.tab_preview, text="Variants Preview")
 
+        self.perm_tree_frame = ttk.Frame(self.tab_preview)
+        self.perm_tree_frame.pack(fill="both", expand=True)
+
         columns = ("index", "name", "gcode")
-        self.perm_tree = ttk.Treeview(self.tab_preview, columns=columns, show="headings", height=7)
+        self.perm_tree = ttk.Treeview(self.perm_tree_frame, columns=columns, show="headings", height=7)
         self.perm_tree.heading("index", text="#")
         self.perm_tree.heading("name", text="Variant Name")
         self.perm_tree.heading("gcode", text="G-code File")
-        self.perm_tree.column("index", width=32, stretch=False, anchor="center")
-        self.perm_tree.column("name", width=230, stretch=True)
-        self.perm_tree.column("gcode", width=140, stretch=False)
-        self.perm_tree.pack(fill="x", expand=True)
+        self.perm_tree.column("index", width=38, stretch=False, anchor="center")
+        self.perm_tree.column("name", width=250, stretch=True, anchor="w")
+        self.perm_tree.column("gcode", width=160, stretch=False, anchor="w")
+
+        perm_vscroll = ttk.Scrollbar(self.perm_tree_frame, orient="vertical", command=self.perm_tree.yview)
+        self.perm_tree.configure(yscrollcommand=perm_vscroll.set)
+        self.perm_tree.grid(row=0, column=0, sticky="nsew")
+        perm_vscroll.grid(row=0, column=1, sticky="ns")
+        self.perm_tree_frame.rowconfigure(0, weight=1)
+        self.perm_tree_frame.columnconfigure(0, weight=1)
+        self._make_treeview_sortable(self.perm_tree)
 
         # --- TAB 1: Summary & Deltas (Image 1) ---
         self.tab_summary = ttk.Frame(self.results_notebook, padding="4")
@@ -593,19 +604,31 @@ class OrcaMatrixApp(tk.Tk):
         self.rec_banner_desc = ttk.Label(self.rec_banner_frame, text="Run slices to compute optimal trade-offs and recommendations.", style="RecDesc.TLabel")
         self.rec_banner_desc.pack(anchor="w")
 
+        self.sum_tree_frame = ttk.Frame(self.tab_summary)
+        self.sum_tree_frame.pack(fill="both", expand=True, pady=(2, 4))
+
         sum_cols = ("variant", "time", "filament", "cost", "delta")
-        self.summary_tree = ttk.Treeview(self.tab_summary, columns=sum_cols, show="headings", height=6)
+        self.summary_tree = ttk.Treeview(self.sum_tree_frame, columns=sum_cols, show="headings", height=6)
         self.summary_tree.heading("variant", text="Variant")
         self.summary_tree.heading("time", text="Print Time")
         self.summary_tree.heading("filament", text="Filament")
         self.summary_tree.heading("cost", text="Cost")
         self.summary_tree.heading("delta", text="vs Baseline")
-        self.summary_tree.column("variant", width=170, stretch=True)
-        self.summary_tree.column("time", width=70, stretch=False, anchor="center")
-        self.summary_tree.column("filament", width=65, stretch=False, anchor="center")
-        self.summary_tree.column("cost", width=55, stretch=False, anchor="center")
-        self.summary_tree.column("delta", width=95, stretch=False, anchor="center")
-        self.summary_tree.pack(fill="x", expand=True, pady=(2, 4))
+        self.summary_tree.column("variant", width=200, minwidth=150, stretch=True, anchor="w")
+        self.summary_tree.column("time", width=85, minwidth=70, stretch=False, anchor="center")
+        self.summary_tree.column("filament", width=85, minwidth=70, stretch=False, anchor="center")
+        self.summary_tree.column("cost", width=65, minwidth=55, stretch=False, anchor="center")
+        self.summary_tree.column("delta", width=110, minwidth=95, stretch=False, anchor="center")
+
+        sum_vscroll = ttk.Scrollbar(self.sum_tree_frame, orient="vertical", command=self.summary_tree.yview)
+        sum_hscroll = ttk.Scrollbar(self.sum_tree_frame, orient="horizontal", command=self.summary_tree.xview)
+        self.summary_tree.configure(yscrollcommand=sum_vscroll.set, xscrollcommand=sum_hscroll.set)
+        self.summary_tree.grid(row=0, column=0, sticky="nsew")
+        sum_vscroll.grid(row=0, column=1, sticky="ns")
+        sum_hscroll.grid(row=1, column=0, sticky="ew")
+        self.sum_tree_frame.rowconfigure(0, weight=1)
+        self.sum_tree_frame.columnconfigure(0, weight=1)
+        self._make_treeview_sortable(self.summary_tree)
 
         sum_btn_row = ttk.Frame(self.tab_summary)
         sum_btn_row.pack(fill="x")
@@ -619,7 +642,7 @@ class OrcaMatrixApp(tk.Tk):
         self.results_notebook.add(self.tab_line_types, text="Filament by Line Type")
 
         self.lt_tree_frame = ttk.Frame(self.tab_line_types)
-        self.lt_tree_frame.pack(fill="x", expand=True, pady=(0, 4))
+        self.lt_tree_frame.pack(fill="both", expand=True, pady=(0, 4))
 
         lt_cols = ("variant", "inner_wall", "outer_wall", "infill", "brim", "total")
         self.line_type_tree = ttk.Treeview(self.lt_tree_frame, columns=lt_cols, show="headings", height=6)
@@ -629,13 +652,22 @@ class OrcaMatrixApp(tk.Tk):
         self.line_type_tree.heading("infill", text="Infill")
         self.line_type_tree.heading("brim", text="Brim")
         self.line_type_tree.heading("total", text="Total")
-        self.line_type_tree.column("variant", width=140, stretch=True)
-        self.line_type_tree.column("inner_wall", width=70, stretch=False, anchor="center")
-        self.line_type_tree.column("outer_wall", width=70, stretch=False, anchor="center")
-        self.line_type_tree.column("infill", width=65, stretch=False, anchor="center")
-        self.line_type_tree.column("brim", width=55, stretch=False, anchor="center")
-        self.line_type_tree.column("total", width=60, stretch=False, anchor="center")
-        self.line_type_tree.pack(fill="x", expand=True)
+        self.line_type_tree.column("variant", width=180, minwidth=140, stretch=True, anchor="w")
+        self.line_type_tree.column("inner_wall", width=95, minwidth=75, stretch=False, anchor="center")
+        self.line_type_tree.column("outer_wall", width=95, minwidth=75, stretch=False, anchor="center")
+        self.line_type_tree.column("infill", width=85, minwidth=70, stretch=False, anchor="center")
+        self.line_type_tree.column("brim", width=75, minwidth=60, stretch=False, anchor="center")
+        self.line_type_tree.column("total", width=85, minwidth=70, stretch=False, anchor="center")
+
+        lt_vscroll = ttk.Scrollbar(self.lt_tree_frame, orient="vertical", command=self.line_type_tree.yview)
+        lt_hscroll = ttk.Scrollbar(self.lt_tree_frame, orient="horizontal", command=self.line_type_tree.xview)
+        self.line_type_tree.configure(yscrollcommand=lt_vscroll.set, xscrollcommand=lt_hscroll.set)
+        self.line_type_tree.grid(row=0, column=0, sticky="nsew")
+        lt_vscroll.grid(row=0, column=1, sticky="ns")
+        lt_hscroll.grid(row=1, column=0, sticky="ew")
+        self.lt_tree_frame.rowconfigure(0, weight=1)
+        self.lt_tree_frame.columnconfigure(0, weight=1)
+        self._make_treeview_sortable(self.line_type_tree)
 
         lt_btn_row = ttk.Frame(self.tab_line_types)
         lt_btn_row.pack(fill="x")
@@ -986,7 +1018,9 @@ class OrcaMatrixApp(tk.Tk):
             try:
                 variants = build_variants(resolved_matrix)
                 for i, v in enumerate(variants, start=1):
-                    self.perm_tree.insert("", "end", values=(i, v.name, v.gcode_filename))
+                    clean_name = format_clean_variant_name(v.name)
+                    self.perm_tree.insert("", "end", values=(i, clean_name, v.gcode_filename))
+                self._make_treeview_sortable(self.perm_tree)
             except Exception as e:
                 self.perm_status_lbl.config(text=f"Error: {e}", foreground="#dc2626")
         else:
@@ -1171,6 +1205,114 @@ class OrcaMatrixApp(tk.Tk):
 
         messagebox.showinfo("Matrix Slice Succeeded", msg)
 
+    @staticmethod
+    def _parse_sort_key(raw_val: Any) -> Tuple[int, float, str]:
+        """Convert a Treeview cell string into a tuple for robust, type-safe sorting.
+
+        Tuples are formatted as:
+        - Numbers: (1, float_value, "")
+        - Strings: (2, 0.0, string_value_lower)
+        - Missing: (3, 0.0, "")
+        """
+        if raw_val is None:
+            return (3, 0.0, "")
+        s = str(raw_val).strip()
+        if s in ("", "-", "None", "ERROR"):
+            return (3, 0.0, "")
+
+        # Try parsing grams: e.g. "0.84g", "15.2 g"
+        if s.endswith("g") or " g" in s:
+            num_part = s.replace("g", "").strip()
+            try:
+                return (1, float(num_part), "")
+            except ValueError:
+                pass
+
+        # Try parsing currency: e.g. "$1.08", "$0.91"
+        if s.startswith("$"):
+            try:
+                return (1, float(s.lstrip("$").strip()), "")
+            except ValueError:
+                pass
+
+        # Try parsing percentage: e.g. "15%"
+        if s.endswith("%"):
+            try:
+                return (1, float(s.rstrip("%").strip()), "")
+            except ValueError:
+                pass
+
+        # Try parsing duration format: e.g. "1h 45m", "45s", "2m", "+19m", "-12m"
+        time_match = re.match(r"^([+-]?)(?:(\d+)h\s*)?(?:(\d+)m\s*)?(?:(\d+)s)?$", s)
+        if time_match and any(time_match.groups()[1:]):
+            sign = -1.0 if time_match.group(1) == "-" else 1.0
+            h = int(time_match.group(2) or 0)
+            m = int(time_match.group(3) or 0)
+            sec = int(time_match.group(4) or 0)
+            total_sec = sign * (h * 3600 + m * 60 + sec)
+            return (1, total_sec, "")
+
+        # Try general float or integer: e.g. "1", "2.5"
+        try:
+            return (1, float(s), "")
+        except ValueError:
+            pass
+
+        # Fallback to case-insensitive string comparison
+        return (2, 0.0, s.lower())
+
+    def _sort_treeview_column(self, tree: ttk.Treeview, col_name: str) -> None:
+        """Sort treeview rows by a specified column name."""
+        if not hasattr(tree, "_sort_state"):
+            tree._sort_state = {}
+        if not hasattr(tree, "_orig_headings"):
+            tree._orig_headings = {}
+
+        current_desc = tree._sort_state.get(col_name, None)
+        descending = True if current_desc is False else False
+        tree._sort_state = {col_name: descending}
+
+        # Update headings with sort indicator
+        for other_col in tree["columns"]:
+            orig = tree._orig_headings.get(other_col, other_col)
+            if other_col == col_name:
+                arrow = " ▼" if descending else " ▲"
+                tree.heading(other_col, text=f"{orig}{arrow}")
+            else:
+                tree.heading(other_col, text=orig)
+
+        # Sort items in place
+        col_idx = list(tree["columns"]).index(col_name)
+        item_ids = tree.get_children("")
+        item_data = []
+        for item_id in item_ids:
+            vals = tree.item(item_id, "values")
+            raw = vals[col_idx] if col_idx < len(vals) else ""
+            item_data.append((self._parse_sort_key(raw), item_id))
+
+        item_data.sort(key=lambda x: x[0], reverse=descending)
+
+        for new_idx, (_, item_id) in enumerate(item_data):
+            tree.move(item_id, "", new_idx)
+
+    def _make_treeview_sortable(self, tree: ttk.Treeview) -> None:
+        """Enable interactive column sorting on a Treeview.
+
+        Clicking a column header sorts ascending (▲); clicking again reverses to descending (▼).
+        Supports numeric sorting (grams, seconds, currency, percentages) and text sorting.
+        """
+        if not hasattr(tree, "_orig_headings"):
+            tree._orig_headings = {}
+        if not hasattr(tree, "_sort_state"):
+            tree._sort_state = {}
+
+        cols = list(tree["columns"])
+        for col in cols:
+            curr_text = tree.heading(col, "text") or ""
+            clean_text = curr_text.rstrip(" ▲▼").strip()
+            tree._orig_headings[col] = clean_text
+            tree.heading(col, text=clean_text, command=lambda c=col: self._sort_treeview_column(tree, c))
+
     def _populate_results_dashboard(self, comparison: Dict[str, Any], manifest_path: Path) -> None:
         """Populate Summary, Line-Type breakdown, and Visual Charts with post-slice analytics."""
         self._last_comparison = comparison
@@ -1187,17 +1329,19 @@ class OrcaMatrixApp(tk.Tk):
             self.summary_tree.delete(item)
 
         for r in comparison.get("summary_rows", []):
+            disp = r.get("display_name") or format_clean_variant_name(r["name"])
             self.summary_tree.insert(
                 "",
                 "end",
                 values=(
-                    r["display_name"],
+                    disp,
                     r["print_time"],
                     r["filament"],
                     r["cost"],
                     r["vs_baseline"],
                 ),
             )
+        self._make_treeview_sortable(self.summary_tree)
 
         # Clear and populate Line Type Treeview
         for item in self.line_type_tree.get_children():
@@ -1211,17 +1355,21 @@ class OrcaMatrixApp(tk.Tk):
             all_cols = ["variant"] + [c.lower().replace(" ", "_") for c in cols] + ["total"]
             self.line_type_tree["columns"] = all_cols
             self.line_type_tree.heading("variant", text="Variant")
-            self.line_type_tree.column("variant", width=140, stretch=True)
+            self.line_type_tree.column("variant", width=180, minwidth=140, stretch=True, anchor="w")
             for c in cols:
                 c_id = c.lower().replace(" ", "_")
                 self.line_type_tree.heading(c_id, text=c)
-                self.line_type_tree.column(c_id, width=70, stretch=False, anchor="center")
+                col_w = max(85, len(c) * 9 + 25)
+                self.line_type_tree.column(c_id, width=col_w, minwidth=col_w, stretch=False, anchor="center")
             self.line_type_tree.heading("total", text="Total")
-            self.line_type_tree.column("total", width=60, stretch=False, anchor="center")
+            self.line_type_tree.column("total", width=85, minwidth=75, stretch=False, anchor="center")
 
             for r in rows:
-                vals = [r["name"]] + [f"{r['roles'].get(c, 0.0):.2f}g" for c in cols] + [f"{r['total_g']:.1f}g"]
+                c_name = r.get("clean_name") or format_clean_variant_name(r["name"])
+                vals = [c_name] + [f"{r['roles'].get(c, 0.0):.2f}g" for c in cols] + [f"{r['total_g']:.1f}g"]
                 self.line_type_tree.insert("", "end", values=vals)
+
+            self._make_treeview_sortable(self.line_type_tree)
 
         # Redraw visual charts
         self._redraw_charts()
