@@ -93,12 +93,27 @@ class MatrixRunner:
         timeout: float = 300.0,
         non_interactive: bool = False,
         dry_run: bool = False,
+        log_callback: Optional[Callable[[str], None]] = None,
+        eta_confirm_fn: Optional[Callable[[float, int, float], bool]] = None,
+        progress_callback: Optional[Callable[[int, int, Variant, str, float], None]] = None,
     ):
         self.client = client
         self.output_dir = Path(output_dir)
         self.timeout = timeout
         self.non_interactive = non_interactive
         self.dry_run = dry_run
+        self.log_callback = log_callback
+        self.eta_confirm_fn = eta_confirm_fn
+        self.progress_callback = progress_callback
+
+    def _log(self, msg: str = "") -> None:
+        """Output log message to stdout and optional log_callback."""
+        print(msg)
+        if self.log_callback:
+            try:
+                self.log_callback(msg)
+            except Exception:
+                pass
 
     def run(
         self,
@@ -111,15 +126,15 @@ class MatrixRunner:
             Tuple of (manifest_path, manifest_dict)
         """
         variants = build_variants(resolved_matrix)
-        print(f"Planning matrix run with {len(variants)} variants across {len(resolved_matrix)} axes:")
+        self._log(f"Planning matrix run with {len(variants)} variants across {len(resolved_matrix)} axes:")
         for axis, values in resolved_matrix.items():
-            print(f"  - {axis}: {values}")
-        print()
+            self._log(f"  - {axis}: {values}")
+        self._log()
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # 1. Fetch current plater status & objects
-        print("Connecting to OrcaSlicer...")
+        self._log("Connecting to OrcaSlicer...")
         status = self.client.get_status()
         objects = self.client.get_objects()
 
@@ -142,30 +157,30 @@ class MatrixRunner:
         if not plate_objects and "plate_objects" in status:
             plate_objects = [str(x) for x in status["plate_objects"]]
 
-        print(f"Connected: {app_name} v{app_version}")
-        print(f"  Printer:  {printer_preset}")
-        print(f"  Print:    {print_preset}")
-        print(f"  Filament: {filament_preset}")
-        print(f"  Objects:  {plate_objects or '(none)'}")
-        print()
+        self._log(f"Connected: {app_name} v{app_version}")
+        self._log(f"  Printer:  {printer_preset}")
+        self._log(f"  Print:    {print_preset}")
+        self._log(f"  Filament: {filament_preset}")
+        self._log(f"  Objects:  {plate_objects or '(none)'}")
+        self._log()
 
         # 2. Fetch full config to snapshot keys and extract filament cost
         full_cfg = self.client.get_config()
         raw_cost = full_cfg.get("filament_cost")
         cost_per_kg = parse_filament_cost(raw_cost)
         if raw_cost is None:
-            print(f"Note: 'filament_cost' not defined in active filament preset. Using default ${cost_per_kg:.2f}/kg.")
+            self._log(f"Note: 'filament_cost' not defined in active filament preset. Using default ${cost_per_kg:.2f}/kg.")
         else:
-            print(f"Active filament cost: ${cost_per_kg:.2f}/kg")
+            self._log(f"Active filament cost: ${cost_per_kg:.2f}/kg")
 
         # Snapshot all keys that appear across all variants
         all_keys = sorted({k for v in variants for k in v.changes})
         snapshot = {k: full_cfg[k] for k in all_keys if k in full_cfg}
-        print(f"Snapshotted {len(snapshot)} config keys to guarantee safe restoration.")
-        print()
+        self._log(f"Snapshotted {len(snapshot)} config keys to guarantee safe restoration.")
+        self._log()
 
         if self.dry_run:
-            print("[DRY-RUN] Matrix validation and snapshot successful. Exiting without slicing.")
+            self._log("[DRY-RUN] Matrix validation and snapshot successful. Exiting without slicing.")
             return self.output_dir / "manifest.json", {}
 
         variant_results: List[Dict[str, Any]] = []
@@ -174,13 +189,17 @@ class MatrixRunner:
         try:
             # 3. Variant 0: Baseline Slice + Wall-Clock Timing + ETA Gate
             v0 = variants[0]
-            print(f"--- Variant 1/{len(variants)} (Baseline): '{v0.name}' ---")
+            self._log(f"--- Variant 1/{len(variants)} (Baseline): '{v0.name}' ---")
+            if self.progress_callback:
+                self.progress_callback(1, len(variants), v0, "slicing", 0.0)
 
             v0_result, wall_seconds = self._slice_single_variant(v0, snapshot, cost_per_kg)
             variant_results.append(v0_result)
+            if self.progress_callback:
+                self.progress_callback(1, len(variants), v0, "done" if not v0_result.get("error") else "error", 100.0)
 
             if wall_seconds < 0.5:
-                print(
+                self._log(
                     f"\n[WARNING] Baseline slice completed in {wall_seconds:.2f}s (suspiciously fast).\n"
                     "This likely indicates a cache hit or an empty plater. ETA estimates may be skewed.\n"
                 )
@@ -192,45 +211,55 @@ class MatrixRunner:
                 est_remaining_sec = (wall_seconds + overhead_per_variant) * remaining_count
                 est_total_sec = wall_seconds + est_remaining_sec
 
-                print()
-                print("=" * 68)
-                print(f"[ETA Gate] Variant 1 sliced in {wall_seconds:.1f}s wall-clock time.")
-                print(f"Remaining variants: {remaining_count}")
-                print(
+                self._log()
+                self._log("=" * 68)
+                self._log(f"[ETA Gate] Variant 1 sliced in {wall_seconds:.1f}s wall-clock time.")
+                self._log(f"Remaining variants: {remaining_count}")
+                self._log(
                     f"Estimated slicing time for remaining: ~{format_duration(est_remaining_sec)} "
                     f"(~{format_duration(est_total_sec)} total)"
                 )
-                print("=" * 68)
+                self._log("=" * 68)
 
                 if not self.non_interactive:
-                    prompt = f"Proceed with remaining {remaining_count} variant(s)? [y/N]: "
-                    sys.stdout.write(prompt)
-                    sys.stdout.flush()
-                    try:
-                        ans = sys.stdin.readline().strip().lower()
-                    except (KeyboardInterrupt, EOFError):
-                        ans = "n"
+                    if self.eta_confirm_fn:
+                        proceed = self.eta_confirm_fn(wall_seconds, remaining_count, est_remaining_sec)
+                        if not proceed:
+                            self._log("\nMatrix execution cancelled by user. Finalizing manifest with completed variants...")
+                            aborted_by_user = True
+                    else:
+                        prompt = f"Proceed with remaining {remaining_count} variant(s)? [y/N]: "
+                        sys.stdout.write(prompt)
+                        sys.stdout.flush()
+                        try:
+                            ans = sys.stdin.readline().strip().lower()
+                        except (KeyboardInterrupt, EOFError):
+                            ans = "n"
 
-                    if ans not in ("y", "yes"):
-                        print("\nMatrix execution cancelled by user. Finalizing manifest with completed variants...")
-                        aborted_by_user = True
+                        if ans not in ("y", "yes"):
+                            self._log("\nMatrix execution cancelled by user. Finalizing manifest with completed variants...")
+                            aborted_by_user = True
 
             # 4. Loop Remaining Variants (if not cancelled)
             if not aborted_by_user:
                 for idx, v in enumerate(variants[1:], start=2):
-                    print(f"\n--- Variant {idx}/{len(variants)}: '{v.name}' ---")
+                    self._log(f"\n--- Variant {idx}/{len(variants)}: '{v.name}' ---")
+                    if self.progress_callback:
+                        self.progress_callback(idx, len(variants), v, "slicing", 0.0)
                     v_res, _ = self._slice_single_variant(v, snapshot, cost_per_kg)
                     variant_results.append(v_res)
+                    if self.progress_callback:
+                        self.progress_callback(idx, len(variants), v, "done" if not v_res.get("error") else "error", 100.0)
 
         finally:
             # 5. Safe Restoration: Guaranteed reset of snapshot config
             if snapshot:
-                print("\nRestoring original plater configuration...")
+                self._log("\nRestoring original plater configuration...")
                 try:
                     self.client.put_config(snapshot)
-                    print("[OK] Configuration successfully restored to baseline.")
+                    self._log("[OK] Configuration successfully restored to baseline.")
                 except Exception as e:
-                    print(f"[ERROR] Restoring configuration to OrcaSlicer: {e}")
+                    self._log(f"[ERROR] Restoring configuration to OrcaSlicer: {e}")
 
         # 6. Build and write manifest.json
         manifest_baseline = baseline_name or variants[0].name
@@ -254,7 +283,7 @@ class MatrixRunner:
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, indent=2)
 
-        print(f"\nManifest successfully written: {manifest_path}")
+        self._log(f"\nManifest successfully written: {manifest_path}")
         self._print_summary_table(variant_results, manifest_baseline)
 
         return manifest_path, manifest_data
@@ -275,7 +304,7 @@ class MatrixRunner:
             applied = self.client.put_config(v.changes)
             if applied.get("errors"):
                 err_msg = f"Invalid config keys: {applied['errors']}"
-                print(f"  [ERROR] {err_msg}")
+                self._log(f"  [ERROR] {err_msg}")
                 return {
                     "name": v.name,
                     "changes": v.changes,
@@ -286,14 +315,14 @@ class MatrixRunner:
                 }, 0.0
 
         # Step C: Trigger slice with wall-clock measurement
-        print("  Starting slice...")
+        self._log("  Starting slice...")
         t0 = time.monotonic()
         try:
             self.client.slice(retry_on_not_started=True)
             slice_status = wait_for_slice(self.client, timeout=self.timeout)
         except OrcaApiError as e:
             err_msg = f"API error starting slice: {e}"
-            print(f"  [ERROR] {err_msg}")
+            self._log(f"  [ERROR] {err_msg}")
             return {
                 "name": v.name,
                 "changes": v.changes,
@@ -308,7 +337,7 @@ class MatrixRunner:
         state = slice_status.get("state")
         if state != "done":
             err_msg = slice_status.get("message") or f"Slice ended with state '{state}'"
-            print(f"  [ERROR] Slice failed: {err_msg}")
+            self._log(f"  [ERROR] Slice failed: {err_msg}")
             return {
                 "name": v.name,
                 "changes": v.changes,
@@ -325,10 +354,10 @@ class MatrixRunner:
             with open(gcode_path, "wb") as f:
                 f.write(gcode_bytes)
             size_kb = len(gcode_bytes) / 1024.0
-            print(f"  Saved G-code: {v.gcode_filename} ({size_kb:.1f} KB)")
+            self._log(f"  Saved G-code: {v.gcode_filename} ({size_kb:.1f} KB)")
         except Exception as e:
             err_msg = f"Failed to download G-code: {e}"
-            print(f"  [ERROR] {err_msg}")
+            self._log(f"  [ERROR] {err_msg}")
             return {
                 "name": v.name,
                 "changes": v.changes,
@@ -357,7 +386,7 @@ class MatrixRunner:
         time_str = format_duration(time_s) if time_s else "n/a"
         fil_str = f"{filament_g:.1f}g" if filament_g is not None else "n/a"
         cost_str = f"${cost_usd:.2f}" if cost_usd is not None else "n/a"
-        print(f"  Result: print_time={time_str}, filament={fil_str}, cost={cost_str} (slice_time={wall_seconds:.1f}s)")
+        self._log(f"  Result: print_time={time_str}, filament={fil_str}, cost={cost_str} (slice_time={wall_seconds:.1f}s)")
 
         return {
             "name": v.name,
@@ -370,12 +399,12 @@ class MatrixRunner:
 
     def _print_summary_table(self, variant_results: List[Dict[str, Any]], baseline_name: str) -> None:
         """Print a clean Markdown summary table of results."""
-        print("\n" + "=" * 78)
-        print("RESULTS SUMMARY")
-        print("=" * 78)
+        self._log("\n" + "=" * 78)
+        self._log("RESULTS SUMMARY")
+        self._log("=" * 78)
         header = f"{'Variant':<35} | {'Print Time':<10} | {'Filament':<9} | {'Cost':<7} | {'Status'}"
-        print(header)
-        print("-" * len(header))
+        self._log(header)
+        self._log("-" * len(header))
         for r in variant_results:
             name = r["name"]
             if name == baseline_name:
@@ -384,12 +413,12 @@ class MatrixRunner:
                 name = name[:31] + "..."
 
             if r.get("error"):
-                print(f"{name:<35} | {'-':<10} | {'-':<9} | {'-':<7} | ERROR: {r['error']}")
+                self._log(f"{name:<35} | {'-':<10} | {'-':<9} | {'-':<7} | ERROR: {r['error']}")
             else:
                 st = r.get("stats") or {}
                 t_str = format_duration(st.get("time_s", 0)) if st.get("time_s") else "?"
                 f_str = f"{st.get('filament_g', 0):.1f}g" if st.get("filament_g") is not None else "?"
                 c_str = f"${st.get('cost_usd', 0):.2f}" if st.get("cost_usd") is not None else "?"
                 warn_str = f" ({len(r['warnings'])} warnings)" if r.get("warnings") else ""
-                print(f"{name:<35} | {t_str:<10} | {f_str:<9} | {c_str:<7} | OK{warn_str}")
-        print("=" * 78)
+                self._log(f"{name:<35} | {t_str:<10} | {f_str:<9} | {c_str:<7} | OK{warn_str}")
+        self._log("=" * 78)

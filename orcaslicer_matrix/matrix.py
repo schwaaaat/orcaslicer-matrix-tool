@@ -16,7 +16,25 @@ from typing import Any, Dict, List, Optional
 from .schema import resolve_matrix_dict
 
 
+MAX_DIMENSIONS = 3
 MAX_VARIANTS = 8
+
+
+class DimensionLimitExceededError(ValueError):
+    """Raised when the matrix defines more than MAX_DIMENSIONS (3) simultaneous dimensions."""
+
+    def __init__(self, count: int, axes: List[str], max_limit: int = MAX_DIMENSIONS):
+        self.count = count
+        self.axes = axes
+        self.max_limit = max_limit
+        msg = (
+            f"Matrix defines {count} simultaneous dimensions ({', '.join(axes)}), "
+            f"which exceeds the maximum limit of {max_limit} simultaneous dimensions.\n"
+            f"A maximum of {max_limit} simultaneous dimensions is supported because any more "
+            f"becomes unmanageable and leads to combinatorial explosion.\n"
+            f"Please reduce your matrix to {max_limit} or fewer dimensions."
+        )
+        super().__init__(msg)
 
 
 class VariantLimitExceededError(ValueError):
@@ -122,15 +140,24 @@ class Variant:
         )
 
 
-def build_variants(resolved_matrix: Dict[str, List[str]], max_variants: int = MAX_VARIANTS) -> List[Variant]:
+def build_variants(
+    resolved_matrix: Dict[str, List[str]],
+    max_variants: int = MAX_VARIANTS,
+    max_dimensions: int = MAX_DIMENSIONS,
+) -> List[Variant]:
     """Generate the Cartesian product of the resolved matrix.
 
-    Validates that the total permutation count does not exceed max_variants (default 8).
+    Validates that:
+      1. Dimension count does not exceed max_dimensions (default 3).
+      2. Total permutation count does not exceed max_variants (default 8).
     """
     if not resolved_matrix:
         raise ValueError("Matrix is empty: at least one axis must be specified.")
 
     keys = list(resolved_matrix.keys())
+    if len(keys) > max_dimensions:
+        raise DimensionLimitExceededError(len(keys), keys, max_limit=max_dimensions)
+
     value_lists = [resolved_matrix[k] for k in keys]
 
     total_permutations = 1

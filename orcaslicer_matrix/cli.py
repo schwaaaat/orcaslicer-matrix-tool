@@ -17,7 +17,9 @@ from typing import List, Optional
 
 from .client import OrcaAuthError, OrcaClient, OrcaConnectionError, OrcaError
 from .matrix import (
+    MAX_DIMENSIONS,
     MAX_VARIANTS,
+    DimensionLimitExceededError,
     VariantLimitExceededError,
     build_variants,
     parse_matrix_input,
@@ -199,6 +201,14 @@ def create_parser() -> argparse.ArgumentParser:
         help="Explicit path to orca-slicer.exe for --launch-viewer.",
     )
 
+    # Graphical User Interface
+    gui_group = parser.add_argument_group("Graphical User Interface")
+    gui_group.add_argument(
+        "--gui",
+        action="store_true",
+        help="Launch the interactive desktop Graphical User Interface.",
+    )
+
     return parser
 
 
@@ -206,10 +216,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = create_parser()
     args = parser.parse_args(argv)
 
+    if args.gui:
+        from .gui import launch_gui
+        return launch_gui()
+
     config_file = args.config_file or args.config_file_pos
     if not config_file and not args.matrix_json and not args.axis_args:
+        # If invoked without any CLI args, launch the GUI for convenience
+        if argv is None and len(sys.argv) == 1:
+            from .gui import launch_gui
+            return launch_gui()
         parser.print_help()
-        print("\nError: Please provide a matrix definition via --config, --matrix, or --axis.")
+        print("\nError: Please provide a matrix definition via --config, --matrix, or --axis (or use --gui).")
         return 1
 
     try:
@@ -223,10 +241,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # 2. Check permutation count & limits early
         variants = build_variants(resolved_matrix)
 
-    except UnknownSettingError as e:
-        sys.stderr.write(f"Error: {e}\n")
-        return 1
-    except VariantLimitExceededError as e:
+    except (UnknownSettingError, VariantLimitExceededError, DimensionLimitExceededError) as e:
         sys.stderr.write(f"Error: {e}\n")
         return 1
     except Exception as e:

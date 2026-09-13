@@ -1,35 +1,40 @@
 # OrcaSlicer Matrix Tool
 
-A standalone, token-free Python CLI tool that slices a matrix of OrcaSlicer setting permutations against whatever model is loaded on the plater, saves each variant's raw G-code, and generates a `manifest.json` conforming to `COMPARE_MANIFEST_SCHEMA.md`.
+A standalone, token-free Python tool with both a modern **Desktop GUI** and **CLI** that slices a matrix of OrcaSlicer setting permutations against whatever model is loaded on the plater, saves each variant's raw G-code, and generates a `manifest.json` conforming to `COMPARE_MANIFEST_SCHEMA.md`.
 
 The generated manifest and G-code files are directly consumed by the native 3D multi-pane compare viewer (`orca-slicer.exe --compare manifest.json`).
 
 ## Key Features
 
-- **Zero LLM / MCP Runtime Overhead**: Pure Python standard library (`urllib.request`, `json`, `argparse`). Talks directly to OrcaSlicer's embedded REST API. No API keys, no Claude tokens, no third-party pip dependencies required.
-- **Intelligent Setting Key Resolution**: Resolves human-friendly names (e.g., `"layer height"`, `"wall count"`, `"infill density"`) and raw config keys (`layer_height`, `wall_loops`) against `print_settings_schema.json`. Unrecognized settings are cleanly rejected with close match suggestions.
+- **Interactive Desktop GUI (`--gui`)**: Modern, native Tkinter/TTK graphical interface. Configure up to 3 dimensions, filter settings by OrcaSlicer Process tabs, click quick-add preset chips, inspect real-time permutation counts, preview variants table, monitor slice progress, and auto-launch the compare viewer.
+- **Comprehensive Process Tab Coverage**: Directly mirrors OrcaSlicer's Process tabs (**Quality**, **Strength**, **Speed**, **Support**, **Others**, **Advanced**, plus **Extrusion & Flow** and **Filament & Cooling**), providing rich presets for common tests and searchable access to all 800+ settings from `print_settings_schema.json`.
+- **Max 3 Dimensions Cap**: Restricts simultaneous matrix dimensions to at most 3 (e.g. Axis A, Axis B, Axis C) to prevent combinatorial explosion and keep comparisons meaningful and manageable.
 - **Strict 8-Variant Hard Cap**: Enforces the maximum 8-variant limit specified in `COMPARE_MANIFEST_SCHEMA.md`. If a matrix produces >8 permutations, execution is refused with clear guidance detailing which axis to trim or drop.
-- **Baseline Wall-Clock Slice Timing & ETA Gate**: Slices the baseline variant first, measures true wall-clock slicing seconds with `time.monotonic()` (distinguishing actual slice time from estimated 3D printing time), detects potential cache hits, calculates the estimated remaining time, and pauses for interactive `[y/N]` confirmation before proceeding (bypassable with `--yes` for automated scripting).
-- **Guaranteed Config Snapshot & Safe Restoration**: Snapshots the baseline state of all targeted settings via `GET /api/v1/config` (filtered client-side to avoid the server's comma-splitting query parameter bug). Applies variants individually, resetting to baseline between slices to prevent permutation stacking, and guarantees exact restoration of the original plater configuration in a `try...finally` block under all circumstances (completion, variant error, or Ctrl+C).
+- **Zero LLM / Runtime Dependencies**: Pure Python standard library (`urllib.request`, `json`, `argparse`, `tkinter`). Talks directly to OrcaSlicer's embedded REST API. No API keys, no Claude tokens, no third-party pip dependencies required.
+- **Intelligent Setting Key Resolution**: Resolves human-friendly names (e.g., `"layer height"`, `"wall count"`, `"infill density"`) and raw config keys (`layer_height`, `wall_loops`) against `print_settings_schema.json`. Unrecognized settings are cleanly rejected with close match suggestions.
+- **Baseline Wall-Clock Slice Timing & ETA Gate**: Slices the baseline variant first, measures true wall-clock slicing seconds with `time.monotonic()`, detects potential cache hits, calculates the estimated remaining time, and pauses for interactive confirmation before proceeding (bypassable with `--yes` for automated scripting).
+- **Guaranteed Config Snapshot & Safe Restoration**: Snapshots the baseline state of all targeted settings via `GET /api/v1/config`. Applies variants individually, resetting to baseline between slices to prevent permutation stacking, and guarantees exact restoration of the original plater configuration in a `try...finally` block under all circumstances (completion, variant error, or Ctrl+C).
 - **Cost Calculation**: Accurately extracts `filament_cost` ($/kg) from the active filament preset and calculates `cost_usd = filament_g * filament_cost / 1000.0`.
-- **Optional Viewer Launch**: Supports `--launch-viewer` / `--viewer-path` to automatically launch OrcaSlicer in compare mode after slicing finishes, failing gracefully if the flag is not yet supported by the local binary.
+- **Compare Viewer Integration**: Supports `--launch-viewer` / `--viewer-path` to automatically launch OrcaSlicer in compare mode after slicing finishes.
 
 ---
 
-## Installation & Requirements
+## Quick Start: Launch GUI
 
-Requires Python 3.8+ (no pip install or external virtual environment needed).
-
-You can run directly:
+Run without arguments (or with `--gui`) to launch the desktop interface:
 ```bash
-python matrix_tool.py --help
+python matrix_tool.py
+# or
+python matrix_tool.py --gui
 ```
 
-Or install in editable mode:
-```bash
-pip install -e .
-orcaslicer-matrix --help
-```
+In the GUI:
+1. View live connection to OrcaSlicer and active plater details (printer, print preset, filament, model on bed).
+2. Add up to 3 dimensions (Axis A, Axis B, Axis C).
+3. Select any OrcaSlicer Process Tab (**Quality**, **Strength**, **Speed**, **Support**, **Others**, **Advanced**, **Extrusion**, **Filament**) or search all 800+ settings.
+4. Click preset value chips or type custom values.
+5. Watch the live permutation calculator enforce the 8-variant limit and preview the permutations table.
+6. Click **Run Matrix Slices** to slice and optionally open the compare viewer!
 
 ---
 

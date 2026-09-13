@@ -104,6 +104,30 @@ class TestMatrix(unittest.TestCase):
         finally:
             Path(temp_path).unlink(missing_ok=True)
 
+    def test_max_dimensions_three_allowed(self):
+        matrix = {
+            "layer_height": ["0.16", "0.20"],
+            "wall_loops": ["2", "3"],
+            "sparse_infill_density": ["15%", "20%"],
+        }
+        variants = build_variants(matrix)
+        self.assertEqual(len(variants), 8)
+
+    def test_four_dimensions_rejected(self):
+        from orcaslicer_matrix.matrix import DimensionLimitExceededError
+        matrix = {
+            "layer_height": ["0.16"],
+            "wall_loops": ["2"],
+            "sparse_infill_density": ["15%"],
+            "outer_wall_speed": ["60"],
+        }
+        with self.assertRaises(DimensionLimitExceededError) as ctx:
+            build_variants(matrix)
+
+        err_msg = str(ctx.exception)
+        self.assertIn("exceeds the maximum limit of 3 simultaneous dimensions", err_msg)
+        self.assertIn("reduce your matrix to 3 or fewer dimensions", err_msg)
+
 
 if __name__ == "__main__":
     unittest.main()
