@@ -14,6 +14,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from .client import OrcaApiError, OrcaClient
 from .matrix import Variant, build_variants
+from .analytics import (
+    compute_matrix_comparison,
+    generate_html_report,
+    parse_gcode_filament_by_role,
+)
 
 
 TERMINAL_SLICE_STATES = frozenset({"done", "error", "idle"})
@@ -110,7 +115,12 @@ class MatrixRunner:
 
     def _log(self, msg: str = "") -> None:
         """Output log message to stdout and optional log_callback."""
-        print(msg)
+        try:
+            print(msg)
+        except UnicodeEncodeError:
+            encoding = sys.stdout.encoding or "utf-8"
+            safe_msg = msg.encode(encoding, errors="replace").decode(encoding, errors="replace")
+            print(safe_msg)
         if self.log_callback:
             try:
                 self.log_callback(msg)
@@ -275,6 +285,8 @@ class MatrixRunner:
 
         # 6. Build and write manifest.json
         manifest_baseline = baseline_name or variants[0].name
+        comparison = compute_matrix_comparison(variant_results, manifest_baseline)
+
         manifest_data = {
             "schema_version": 1,
             "created_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -289,14 +301,23 @@ class MatrixRunner:
             "baseline": manifest_baseline,
             "matrix": resolved_matrix,
             "variants": variant_results,
+            "comparison": comparison,
         }
 
         manifest_path = self.output_dir / "manifest.json"
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest_data, f, indent=2)
 
+        # Generate HTML report
+        html_report_path = self.output_dir / "report.html"
+        try:
+            generate_html_report(manifest_data, comparison, html_report_path)
+            self._log(f"Interactive HTML Report: {html_report_path}")
+        except Exception as e:
+            self._log(f"[WARNING] Could not generate HTML report: {e}")
+
         self._log(f"\nManifest successfully written: {manifest_path}")
-        self._print_summary_table(variant_results, manifest_baseline)
+        self._print_summary_table(comparison)
 
         return manifest_path, manifest_data
 
@@ -388,10 +409,16 @@ class MatrixRunner:
         if filament_g is not None:
             cost_usd = round((filament_g * cost_per_kg) / 1000.0, 2)
 
+        # Parse G-code filament by role if file exists
+        filament_by_role = {}
+        if gcode_path.is_file():
+            filament_by_role = parse_gcode_filament_by_role(gcode_path, fallback_mass_g=filament_g)
+
         stats_dict = {
             "time_s": time_s,
             "filament_g": round(filament_g, 2) if filament_g is not None else None,
             "cost_usd": cost_usd,
+            "filament_by_role": filament_by_role,
         }
         warnings = slice_status.get("warnings", [])
 
@@ -409,28 +436,15 @@ class MatrixRunner:
             "error": None,
         }, wall_seconds
 
-    def _print_summary_table(self, variant_results: List[Dict[str, Any]], baseline_name: str) -> None:
-        """Print a clean Markdown summary table of results."""
+    def _print_summary_table(self, comparison: Dict[str, Any]) -> None:
+        """Print clean Markdown summary tables (Images 1 & 2) and recommendation."""
         self._log("\n" + "=" * 78)
-        self._log("RESULTS SUMMARY")
-        self._log("=" * 78)
-        header = f"{'Variant':<35} | {'Print Time':<10} | {'Filament':<9} | {'Cost':<7} | {'Status'}"
-        self._log(header)
-        self._log("-" * len(header))
-        for r in variant_results:
-            name = r["name"]
-            if name == baseline_name:
-                name += " (baseline)"
-            if len(name) > 34:
-                name = name[:31] + "..."
-
-            if r.get("error"):
-                self._log(f"{name:<35} | {'-':<10} | {'-':<9} | {'-':<7} | ERROR: {r['error']}")
-            else:
-                st = r.get("stats") or {}
-                t_str = format_duration(st.get("time_s", 0)) if st.get("time_s") else "?"
-                f_str = f"{st.get('filament_g', 0):.1f}g" if st.get("filament_g") is not None else "?"
-                c_str = f"${st.get('cost_usd', 0):.2f}" if st.get("cost_usd") is not None else "?"
-                warn_str = f" ({len(r['warnings'])} warnings)" if r.get("warnings") else ""
-                self._log(f"{name:<35} | {t_str:<10} | {f_str:<9} | {c_str:<7} | OK{warn_str}")
+        self._log(comparison.get("summary_markdown", ""))
+        lt_md = comparison.get("line_type_markdown", "")
+        if lt_md:
+            self._log("\n" + lt_md)
+        rec = comparison.get("recommended")
+        rec_reason = comparison.get("recommendation_reason")
+        if rec:
+            self._log(f"\n★ Recommended: {rec} — {rec_reason}")
         self._log("=" * 78)

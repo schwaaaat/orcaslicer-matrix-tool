@@ -153,5 +153,112 @@ class TestOrcaMatrixApp(unittest.TestCase):
         self.assertEqual(str(self.app.auto_skip_entry.cget("state")), "normal")
 
 
+    def test_results_notebook_tabs_exist(self):
+        tabs = self.app.results_notebook.tabs()
+        self.assertEqual(len(tabs), 4)
+        tab_titles = [self.app.results_notebook.tab(t, "text") for t in tabs]
+        self.assertIn("Variants Preview", tab_titles)
+        self.assertIn("Summary & Deltas", tab_titles)
+        self.assertIn("Filament by Line Type", tab_titles)
+        self.assertIn("Visual Charts", tab_titles)
+
+    def test_populate_results_dashboard(self):
+        comparison = {
+            "baseline": "v1",
+            "recommended": "v2",
+            "recommendation_reason": "Fastest slice time.",
+            "summary_rows": [
+                {
+                    "name": "v1",
+                    "display_name": "v1 (baseline)",
+                    "print_time": "1h 00m",
+                    "filament": "50.0 g",
+                    "cost": "$1.00",
+                    "vs_baseline": "-",
+                    "time_s": 3600,
+                    "filament_g": 50.0,
+                    "is_baseline": True,
+                    "is_fastest": False,
+                    "is_lightest": False,
+                    "is_recommended": False,
+                    "error": None,
+                },
+                {
+                    "name": "v2",
+                    "display_name": "v2 ★ fastest",
+                    "print_time": "45m",
+                    "filament": "51.0 g",
+                    "cost": "$1.02",
+                    "vs_baseline": "-15m, +1.0g",
+                    "time_s": 2700,
+                    "filament_g": 51.0,
+                    "is_baseline": False,
+                    "is_fastest": True,
+                    "is_lightest": False,
+                    "is_recommended": True,
+                    "error": None,
+                },
+            ],
+            "line_type_matrix": {
+                "columns": ["Inner wall", "Outer wall"],
+                "rows": [
+                    {"name": "v1", "roles": {"Inner wall": 30.0, "Outer wall": 20.0}, "total_g": 50.0},
+                    {"name": "v2", "roles": {"Inner wall": 31.0, "Outer wall": 20.0}, "total_g": 51.0},
+                ],
+            },
+            "summary_markdown": "# Summary\n...",
+            "line_type_markdown": "# Line Types\n...",
+        }
+
+        self.app._populate_results_dashboard(comparison, Path("test_dir/manifest.json"))
+
+        # Check banner
+        self.assertIn("v2", self.app.rec_banner_title.cget("text"))
+        self.assertEqual(self.app.rec_banner_desc.cget("text"), "Fastest slice time.")
+
+        # Check summary treeview
+        summary_items = self.app.summary_tree.get_children()
+        self.assertEqual(len(summary_items), 2)
+        v1_row = self.app.summary_tree.item(summary_items[0])["values"]
+        self.assertEqual(v1_row[0], "v1 (baseline)")
+        self.assertEqual(v1_row[1], "1h 00m")
+
+        # Check line type treeview
+        lt_items = self.app.line_type_tree.get_children()
+        self.assertEqual(len(lt_items), 2)
+
+        # Check notebook tab switched to summary
+        current_tab = self.app.results_notebook.select()
+        self.assertEqual(self.app.results_notebook.tab(current_tab, "text"), "Summary & Deltas")
+
+    def test_charts_canvas_rendering(self):
+        comparison = {
+            "summary_rows": [
+                {"name": "v1", "time_s": 3600, "filament_g": 50.0, "is_baseline": True, "is_fastest": False, "is_recommended": False, "error": None},
+                {"name": "v2", "time_s": 2700, "filament_g": 51.0, "is_baseline": False, "is_fastest": True, "is_recommended": True, "error": None},
+            ],
+            "line_type_matrix": {
+                "columns": ["Inner wall", "Outer wall"],
+                "rows": [
+                    {"name": "v1", "roles": {"Inner wall": 30.0, "Outer wall": 20.0}, "total_g": 50.0},
+                    {"name": "v2", "roles": {"Inner wall": 31.0, "Outer wall": 20.0}, "total_g": 51.0},
+                ],
+            },
+        }
+        self.app._last_comparison = comparison
+
+        # Test stacked mode
+        self.app.chart_type_var.set("stacked")
+        self.app._redraw_charts()
+        items_stacked = self.app.charts_canvas.find_all()
+        self.assertGreater(len(items_stacked), 0)
+
+        # Test pareto mode
+        self.app.chart_type_var.set("pareto")
+        self.app._redraw_charts()
+        items_pareto = self.app.charts_canvas.find_all()
+        self.assertGreater(len(items_pareto), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

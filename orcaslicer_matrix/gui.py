@@ -428,6 +428,9 @@ class OrcaMatrixApp(tk.Tk):
         self.style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"))
         self.style.configure("StatusConnected.TLabel", foreground="#16a34a", font=("Segoe UI", 9, "bold"))
         self.style.configure("StatusDisconnected.TLabel", foreground="#dc2626", font=("Segoe UI", 9, "bold"))
+        self.style.configure("RecBanner.TFrame", background="#0369a1", relief="solid", borderwidth=1)
+        self.style.configure("RecTitle.TLabel", font=("Segoe UI", 9, "bold"), foreground="#e0f2fe", background="#0369a1")
+        self.style.configure("RecDesc.TLabel", font=("Segoe UI", 8), foreground="#bae6fd", background="#0369a1")
 
     def _build_main_ui(self) -> None:
         # Top Header Bar: Title, Subtitle, and Connection Status Card
@@ -557,19 +560,97 @@ class OrcaMatrixApp(tk.Tk):
         )
         self.perm_suggestions_lbl.pack(anchor="w", pady=(3, 0))
 
-        # Permutations Table
-        table_lbl = ttk.Label(right_frame, text="Permutation Variants Preview:", font=("Segoe UI", 9, "bold"))
-        table_lbl.pack(anchor="w", pady=(0, 4))
+        # Results & Analytics Notebook
+        self.results_notebook = ttk.Notebook(right_frame)
+        self.results_notebook.pack(fill="x", pady=(0, 8))
+
+        # --- TAB 0: Variants Preview (Pre-slice) ---
+        self.tab_preview = ttk.Frame(self.results_notebook, padding="4")
+        self.results_notebook.add(self.tab_preview, text="Variants Preview")
 
         columns = ("index", "name", "gcode")
-        self.perm_tree = ttk.Treeview(right_frame, columns=columns, show="headings", height=7)
+        self.perm_tree = ttk.Treeview(self.tab_preview, columns=columns, show="headings", height=7)
         self.perm_tree.heading("index", text="#")
         self.perm_tree.heading("name", text="Variant Name")
         self.perm_tree.heading("gcode", text="G-code File")
         self.perm_tree.column("index", width=32, stretch=False, anchor="center")
         self.perm_tree.column("name", width=230, stretch=True)
         self.perm_tree.column("gcode", width=140, stretch=False)
-        self.perm_tree.pack(fill="x", pady=(0, 8))
+        self.perm_tree.pack(fill="x", expand=True)
+
+        # --- TAB 1: Summary & Deltas (Image 1) ---
+        self.tab_summary = ttk.Frame(self.results_notebook, padding="4")
+        self.results_notebook.add(self.tab_summary, text="Summary & Deltas")
+
+        self.rec_banner_frame = ttk.Frame(self.tab_summary, padding="6", style="RecBanner.TFrame")
+        self.rec_banner_frame.pack(fill="x", pady=(0, 4))
+        self.rec_banner_title = ttk.Label(self.rec_banner_frame, text="★ Recommended Choice: None", style="RecTitle.TLabel")
+        self.rec_banner_title.pack(anchor="w")
+        self.rec_banner_desc = ttk.Label(self.rec_banner_frame, text="Run slices to compute optimal trade-offs and recommendations.", style="RecDesc.TLabel")
+        self.rec_banner_desc.pack(anchor="w")
+
+        sum_cols = ("variant", "time", "filament", "cost", "delta")
+        self.summary_tree = ttk.Treeview(self.tab_summary, columns=sum_cols, show="headings", height=6)
+        self.summary_tree.heading("variant", text="Variant")
+        self.summary_tree.heading("time", text="Print Time")
+        self.summary_tree.heading("filament", text="Filament")
+        self.summary_tree.heading("cost", text="Cost")
+        self.summary_tree.heading("delta", text="vs Baseline")
+        self.summary_tree.column("variant", width=170, stretch=True)
+        self.summary_tree.column("time", width=70, stretch=False, anchor="center")
+        self.summary_tree.column("filament", width=65, stretch=False, anchor="center")
+        self.summary_tree.column("cost", width=55, stretch=False, anchor="center")
+        self.summary_tree.column("delta", width=95, stretch=False, anchor="center")
+        self.summary_tree.pack(fill="x", expand=True, pady=(2, 4))
+
+        sum_btn_row = ttk.Frame(self.tab_summary)
+        sum_btn_row.pack(fill="x")
+        self.copy_summary_btn = ttk.Button(sum_btn_row, text="📋 Copy Summary Markdown", command=self._copy_summary_markdown)
+        self.copy_summary_btn.pack(side="left", padx=(0, 4))
+        self.open_html_btn = ttk.Button(sum_btn_row, text="🌐 Open HTML Report", command=self._open_html_report)
+        self.open_html_btn.pack(side="left")
+
+        # --- TAB 2: Filament by Line Type (Image 2) ---
+        self.tab_line_types = ttk.Frame(self.results_notebook, padding="4")
+        self.results_notebook.add(self.tab_line_types, text="Filament by Line Type")
+
+        self.lt_tree_frame = ttk.Frame(self.tab_line_types)
+        self.lt_tree_frame.pack(fill="x", expand=True, pady=(0, 4))
+
+        lt_cols = ("variant", "inner_wall", "outer_wall", "infill", "brim", "total")
+        self.line_type_tree = ttk.Treeview(self.lt_tree_frame, columns=lt_cols, show="headings", height=6)
+        self.line_type_tree.heading("variant", text="Variant")
+        self.line_type_tree.heading("inner_wall", text="Inner wall")
+        self.line_type_tree.heading("outer_wall", text="Outer wall")
+        self.line_type_tree.heading("infill", text="Infill")
+        self.line_type_tree.heading("brim", text="Brim")
+        self.line_type_tree.heading("total", text="Total")
+        self.line_type_tree.column("variant", width=140, stretch=True)
+        self.line_type_tree.column("inner_wall", width=70, stretch=False, anchor="center")
+        self.line_type_tree.column("outer_wall", width=70, stretch=False, anchor="center")
+        self.line_type_tree.column("infill", width=65, stretch=False, anchor="center")
+        self.line_type_tree.column("brim", width=55, stretch=False, anchor="center")
+        self.line_type_tree.column("total", width=60, stretch=False, anchor="center")
+        self.line_type_tree.pack(fill="x", expand=True)
+
+        lt_btn_row = ttk.Frame(self.tab_line_types)
+        lt_btn_row.pack(fill="x")
+        self.copy_lt_btn = ttk.Button(lt_btn_row, text="📋 Copy Line Types Markdown", command=self._copy_line_types_markdown)
+        self.copy_lt_btn.pack(side="left")
+
+        # --- TAB 3: Visual Charts (Canvas) ---
+        self.tab_charts = ttk.Frame(self.results_notebook, padding="4")
+        self.results_notebook.add(self.tab_charts, text="Visual Charts")
+
+        chart_controls_row = ttk.Frame(self.tab_charts)
+        chart_controls_row.pack(fill="x", pady=(0, 2))
+        self.chart_type_var = tk.StringVar(value="stacked")
+        ttk.Radiobutton(chart_controls_row, text="Filament Breakdown (Stacked)", variable=self.chart_type_var, value="stacked", command=self._redraw_charts).pack(side="left", padx=(0, 8))
+        ttk.Radiobutton(chart_controls_row, text="Pareto Frontier (Time vs Material)", variable=self.chart_type_var, value="pareto", command=self._redraw_charts).pack(side="left")
+
+        self.charts_canvas = tk.Canvas(self.tab_charts, height=180, background="#1e293b", highlightthickness=0)
+        self.charts_canvas.pack(fill="both", expand=True)
+        self.charts_canvas.bind("<Configure>", lambda e: self._redraw_charts())
 
         # Output & Options Frame
         opts_frame = ttk.LabelFrame(right_frame, text="Execution Options", padding="10")
@@ -1039,6 +1120,15 @@ class OrcaMatrixApp(tk.Tk):
             messagebox.showinfo("Dry Run Complete", f"Matrix dry run succeeded!\nManifest target: {manifest_path}")
             return
 
+        # Populate results dashboard
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if "comparison" in data:
+                self._populate_results_dashboard(data["comparison"], manifest_path)
+        except Exception as e:
+            self._log_message(f"[WARNING] Could not populate results dashboard: {e}")
+
         msg = f"Matrix slices successfully completed!\n\nManifest: {manifest_path}"
         # Launch viewer if requested
         if self.launch_viewer_var.get():
@@ -1051,6 +1141,261 @@ class OrcaMatrixApp(tk.Tk):
                 msg += "\n\nNote: OrcaSlicer executable not found to auto-launch viewer."
 
         messagebox.showinfo("Matrix Slice Succeeded", msg)
+
+    def _populate_results_dashboard(self, comparison: Dict[str, Any], manifest_path: Path) -> None:
+        """Populate Summary, Line-Type breakdown, and Visual Charts with post-slice analytics."""
+        self._last_comparison = comparison
+        self._last_html_report = manifest_path.parent / "report.html"
+
+        # Update recommendation banner
+        rec = comparison.get("recommended") or "None"
+        reason = comparison.get("recommendation_reason") or ""
+        self.rec_banner_title.config(text=f"★ Recommended Choice: {rec}")
+        self.rec_banner_desc.config(text=reason)
+
+        # Clear and populate Summary Treeview
+        for item in self.summary_tree.get_children():
+            self.summary_tree.delete(item)
+
+        for r in comparison.get("summary_rows", []):
+            self.summary_tree.insert(
+                "",
+                "end",
+                values=(
+                    r["display_name"],
+                    r["print_time"],
+                    r["filament"],
+                    r["cost"],
+                    r["vs_baseline"],
+                ),
+            )
+
+        # Clear and populate Line Type Treeview
+        for item in self.line_type_tree.get_children():
+            self.line_type_tree.delete(item)
+
+        lt_data = comparison.get("line_type_matrix", {})
+        cols = lt_data.get("columns", [])
+        rows = lt_data.get("rows", [])
+
+        if cols:
+            all_cols = ["variant"] + [c.lower().replace(" ", "_") for c in cols] + ["total"]
+            self.line_type_tree["columns"] = all_cols
+            self.line_type_tree.heading("variant", text="Variant")
+            self.line_type_tree.column("variant", width=140, stretch=True)
+            for c in cols:
+                c_id = c.lower().replace(" ", "_")
+                self.line_type_tree.heading(c_id, text=c)
+                self.line_type_tree.column(c_id, width=70, stretch=False, anchor="center")
+            self.line_type_tree.heading("total", text="Total")
+            self.line_type_tree.column("total", width=60, stretch=False, anchor="center")
+
+            for r in rows:
+                vals = [r["name"]] + [f"{r['roles'].get(c, 0.0):.2f}g" for c in cols] + [f"{r['total_g']:.1f}g"]
+                self.line_type_tree.insert("", "end", values=vals)
+
+        # Redraw visual charts
+        self._redraw_charts()
+
+        # Switch notebook focus to Summary tab
+        self.results_notebook.select(self.tab_summary)
+
+    def _copy_summary_markdown(self) -> None:
+        """Copy the exact Image 1 summary markdown table to system clipboard."""
+        if hasattr(self, "_last_comparison") and self._last_comparison:
+            md = self._last_comparison.get("summary_markdown", "")
+            if md:
+                self.clipboard_clear()
+                self.clipboard_append(md)
+                self._log_message("[INFO] Copied summary markdown table to clipboard.")
+                messagebox.showinfo("Clipboard", "Summary table copied to clipboard!")
+        else:
+            messagebox.showinfo("Clipboard", "No slice summary data available yet.")
+
+    def _copy_line_types_markdown(self) -> None:
+        """Copy the exact Image 2 line-types markdown table to system clipboard."""
+        if hasattr(self, "_last_comparison") and self._last_comparison:
+            md = self._last_comparison.get("line_type_markdown", "")
+            if md:
+                self.clipboard_clear()
+                self.clipboard_append(md)
+                self._log_message("[INFO] Copied filament line types markdown to clipboard.")
+                messagebox.showinfo("Clipboard", "Filament line types table copied to clipboard!")
+        else:
+            messagebox.showinfo("Clipboard", "No filament line-type data available yet.")
+
+    def _open_html_report(self) -> None:
+        """Open the generated standalone HTML report in default browser."""
+        if hasattr(self, "_last_html_report") and self._last_html_report and self._last_html_report.is_file():
+            import webbrowser
+            webbrowser.open(self._last_html_report.as_uri())
+        else:
+            messagebox.showinfo("HTML Report", "No HTML report available yet. Run a matrix slice first.")
+
+    def _redraw_charts(self) -> None:
+        """Redraw current selected visual chart on self.charts_canvas."""
+        if self._is_destroyed or not self.charts_canvas.winfo_exists():
+            return
+
+        if not hasattr(self, "_last_comparison") or not self._last_comparison:
+            self.charts_canvas.delete("all")
+            w = self.charts_canvas.winfo_width() or 400
+            h = self.charts_canvas.winfo_height() or 180
+            self.charts_canvas.create_text(
+                w / 2,
+                h / 2,
+                text="Slice matrix variants to render visual charts.",
+                fill="#94a3b8",
+                font=("Segoe UI", 9, "italic"),
+            )
+            return
+
+        mode = self.chart_type_var.get()
+        if mode == "stacked":
+            self._draw_stacked_bar_chart()
+        else:
+            self._draw_pareto_chart()
+
+    def _draw_stacked_bar_chart(self) -> None:
+        """Render horizontal stacked bars on Tkinter canvas for filament breakdown."""
+        self.charts_canvas.delete("all")
+        w = self.charts_canvas.winfo_width() or 480
+        h = self.charts_canvas.winfo_height() or 180
+
+        lt_data = self._last_comparison.get("line_type_matrix", {})
+        columns = lt_data.get("columns", [])
+        rows = lt_data.get("rows", [])
+        if not rows or not columns:
+            return
+
+        palette = [
+            "#3b82f6",  # Inner wall - Blue
+            "#10b981",  # Outer wall - Emerald
+            "#f59e0b",  # Infill - Amber
+            "#8b5cf6",  # Solid infill - Purple
+            "#ec4899",  # Top surface - Pink
+            "#64748b",  # Brim - Slate
+            "#06b6d4",  # Support - Cyan
+            "#d97706",  # Bridge
+        ]
+        color_map = {col: palette[i % len(palette)] for i, col in enumerate(columns)}
+
+        # Legend at top
+        leg_x = 10
+        for col in columns[:5]:
+            c = color_map[col]
+            self.charts_canvas.create_rectangle(leg_x, 8, leg_x + 9, 17, fill=c, outline="")
+            self.charts_canvas.create_text(leg_x + 13, 12, text=col[:10], fill="#cbd5e1", font=("Segoe UI", 8), anchor="w")
+            leg_x += len(col[:10]) * 6 + 24
+
+        bar_h = min(22, max(12, int((h - 35) / len(rows) - 6)))
+        bar_gap = 6
+        start_y = 28
+        margin_l = 150
+        margin_r = 50
+        plot_w = max(100, w - margin_l - margin_r)
+
+        max_mass = max(r["total_g"] for r in rows) if rows else 100.0
+        scale = plot_w / (max_mass + 1e-6)
+
+        for i, r in enumerate(rows):
+            y = start_y + i * (bar_h + bar_gap)
+            name = r["name"]
+            if len(name) > 20:
+                name = name[:18] + ".."
+            self.charts_canvas.create_text(margin_l - 8, y + bar_h / 2, text=name, fill="#f8fafc", font=("Segoe UI", 8, "bold"), anchor="e")
+
+            # Background bar
+            self.charts_canvas.create_rectangle(margin_l, y, margin_l + plot_w, y + bar_h, fill="#0f172a", outline="")
+
+            # Color-coded segments
+            curr_x = margin_l
+            for col in columns:
+                val = r["roles"].get(col, 0.0)
+                if val <= 0.001:
+                    continue
+                seg_w = val * scale
+                c = color_map.get(col, "#94a3b8")
+                self.charts_canvas.create_rectangle(curr_x, y, curr_x + seg_w, y + bar_h, fill=c, outline="")
+                curr_x += seg_w
+
+            self.charts_canvas.create_text(curr_x + 6, y + bar_h / 2, text=f"{r['total_g']:.1f}g", fill="#94a3b8", font=("Segoe UI", 8), anchor="w")
+
+    def _draw_pareto_chart(self) -> None:
+        """Render 2D Pareto frontier scatter plot on Tkinter canvas."""
+        self.charts_canvas.delete("all")
+        w = self.charts_canvas.winfo_width() or 480
+        h = self.charts_canvas.winfo_height() or 180
+
+        summary_rows = self._last_comparison.get("summary_rows", [])
+        valid_pts = [r for r in summary_rows if r.get("time_s") and r.get("filament_g") and not r.get("error")]
+        if not valid_pts:
+            return
+
+        margin_l, margin_r, margin_t, margin_b = 55, 30, 20, 25
+        plot_w = max(100, w - margin_l - margin_r)
+        plot_h = max(60, h - margin_t - margin_b)
+
+        times = [p["time_s"] / 60.0 for p in valid_pts]
+        masses = [p["filament_g"] for p in valid_pts]
+
+        min_t, max_t = min(times), max(times)
+        min_m, max_m = min(masses), max(masses)
+        t_pad = max(2, (max_t - min_t) * 0.2)
+        m_pad = max(0.5, (max_m - min_m) * 0.2)
+
+        x_min, x_max = max(0, min_m - m_pad), max_m + m_pad
+        y_min, y_max = max(0, min_t - t_pad), max_t + t_pad
+
+        def to_x(m: float) -> float:
+            return margin_l + ((m - x_min) / (x_max - x_min + 1e-6)) * plot_w
+
+        def to_y(t: float) -> float:
+            return margin_t + plot_h - ((t - y_min) / (y_max - y_min + 1e-6)) * plot_h
+
+        # Axes
+        self.charts_canvas.create_line(margin_l, margin_t + plot_h, margin_l + plot_w, margin_t + plot_h, fill="#475569")
+        self.charts_canvas.create_line(margin_l, margin_t, margin_l, margin_t + plot_h, fill="#475569")
+        self.charts_canvas.create_text(margin_l + plot_w / 2, h - 8, text="Filament Mass (g) →", fill="#94a3b8", font=("Segoe UI", 8))
+        self.charts_canvas.create_text(25, margin_t + plot_h / 2, text="Time\n(min)", fill="#94a3b8", font=("Segoe UI", 7), justify="center")
+
+        # Pareto Frontier Line
+        pts_sorted = sorted(valid_pts, key=lambda p: (p["filament_g"], p["time_s"]))
+        frontier = []
+        curr_min_t = float("inf")
+        for p in pts_sorted:
+            t_val = p["time_s"] / 60.0
+            if t_val <= curr_min_t:
+                frontier.append((p["filament_g"], t_val))
+                curr_min_t = t_val
+
+        if len(frontier) > 1:
+            for j in range(len(frontier) - 1):
+                x1, y1 = to_x(frontier[j][0]), to_y(frontier[j][1])
+                x2, y2 = to_x(frontier[j + 1][0]), to_y(frontier[j + 1][1])
+                self.charts_canvas.create_line(x1, y1, x2, y2, fill="#38bdf8", dash=(3, 3), width=1)
+
+        # Plot points
+        for p in valid_pts:
+            cx = to_x(p["filament_g"])
+            cy = to_y(p["time_s"] / 60.0)
+            col = "#38bdf8"
+            rad = 4
+            if p["is_baseline"]:
+                col = "#60a5fa"
+                rad = 5
+            if p["is_fastest"]:
+                col = "#fbbf24"
+                rad = 6
+            if p["is_recommended"]:
+                col = "#34d399"
+                rad = 6
+
+            self.charts_canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=col, outline="#0f172a", width=1)
+            lbl = p["name"]
+            if len(lbl) > 12:
+                lbl = lbl[:10] + ".."
+            self.charts_canvas.create_text(cx + rad + 3, cy - 2, text=lbl, fill="#f8fafc", font=("Segoe UI", 7, "bold"), anchor="w")
 
     def _on_run_error(self, error_str: str) -> None:
         if self._is_destroyed:
