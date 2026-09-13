@@ -1,7 +1,10 @@
 """Unit tests for the OrcaSlicer Matrix Tool Graphical User Interface (GUI)."""
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from orcaslicer_matrix.gui import DimensionCard, OrcaMatrixApp
 from orcaslicer_matrix.matrix import MAX_DIMENSIONS, MAX_VARIANTS
@@ -258,6 +261,46 @@ class TestOrcaMatrixApp(unittest.TestCase):
         self.app._redraw_charts()
         items_pareto = self.app.charts_canvas.find_all()
         self.assertGreater(len(items_pareto), 0)
+
+    @patch("tkinter.messagebox.showinfo")
+    def test_on_run_complete_loads_manifest_and_populates_dashboard(self, mock_showinfo):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            manifest_path = Path(tmp_dir) / "manifest.json"
+            manifest_data = {
+                "schema_version": 1,
+                "variants": [],
+                "comparison": {
+                    "recommended": "test_variant",
+                    "recommendation_reason": "Optimal speed.",
+                    "summary_rows": [
+                        {
+                            "name": "test_variant",
+                            "display_name": "test_variant (baseline)",
+                            "print_time": "1h 10m",
+                            "filament": "45.0 g",
+                            "cost": "$0.90",
+                            "vs_baseline": "-",
+                        }
+                    ],
+                    "line_type_matrix": {
+                        "columns": ["Inner wall"],
+                        "rows": [{"name": "test_variant", "roles": {"Inner wall": 45.0}, "total_g": 45.0}],
+                    },
+                },
+            }
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest_data, f)
+
+            # Disable viewer launch for test
+            self.app.launch_viewer_var.set(False)
+
+            # Invoke _on_run_finished
+            self.app._on_run_finished(manifest_path, dry_run=False)
+
+            # Verify no exceptions and dashboard populated
+            self.assertIn("test_variant", self.app.rec_banner_title.cget("text"))
+            self.assertEqual(len(self.app.summary_tree.get_children()), 1)
+            self.assertEqual(len(self.app.line_type_tree.get_children()), 1)
 
 
 if __name__ == "__main__":

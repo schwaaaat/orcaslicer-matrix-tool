@@ -7,10 +7,12 @@ permutation counts, run matrix slices, and launch the compare viewer.
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
