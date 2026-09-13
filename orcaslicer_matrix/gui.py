@@ -7,6 +7,7 @@ permutation counts, run matrix slices, and launch the compare viewer.
 
 from __future__ import annotations
 
+import datetime
 import json
 import math
 import os
@@ -17,7 +18,7 @@ import threading
 import time
 import webbrowser
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
@@ -411,6 +412,160 @@ class DimensionCard(ttk.Frame):
         return True
 
 
+class SubsetSelectionDialog(tk.Toplevel):
+    """Modal dialog allowing user to pick a subset of sliced variants/files to open in compare viewer."""
+
+    def __init__(
+        self,
+        parent: tk.Tk,
+        variants: List[Dict[str, Any]],
+        on_confirm: Callable[[List[Dict[str, Any]]], None],
+        initial_selected_names: Optional[Set[str]] = None,
+    ):
+        super().__init__(parent)
+        self.title("Select Variants to Compare")
+        self.geometry("540x440")
+        self.minsize(460, 320)
+        self.transient(parent)
+        self.grab_set()
+
+        self.variants = variants
+        self.on_confirm = on_confirm
+
+        self._build_ui(initial_selected_names or set())
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.bind("<Escape>", lambda e: self.destroy())
+
+    def _build_ui(self, initial_selected: Set[str]) -> None:
+        main_frame = ttk.Frame(self, padding="14")
+        main_frame.pack(fill="both", expand=True)
+
+        ttk.Label(
+            main_frame,
+            text="Select Files for Compare Viewer",
+            font=("Segoe UI", 12, "bold"),
+            foreground="#0f172a",
+        ).pack(anchor="w", pady=(0, 2))
+
+        ttk.Label(
+            main_frame,
+            text="Choose which sliced files to open side-by-side (1 to 8 variants):",
+            font=("Segoe UI", 9),
+            foreground="#64748b",
+        ).pack(anchor="w", pady=(0, 8))
+
+        # Action row: live counter and Select All / Clear All
+        action_row = ttk.Frame(main_frame)
+        action_row.pack(fill="x", pady=(0, 6))
+
+        self.count_lbl = ttk.Label(action_row, text="Selected: 0", font=("Segoe UI", 9, "bold"))
+        self.count_lbl.pack(side="left")
+
+        ttk.Button(action_row, text="Select All", width=10, command=self._select_all).pack(side="right", padx=(4, 0))
+        ttk.Button(action_row, text="Clear All", width=10, command=self._clear_all).pack(side="right")
+
+        # Scrollable checklist frame
+        list_container = ttk.Frame(main_frame, relief="solid", borderwidth=1)
+        list_container.pack(fill="both", expand=True, pady=(0, 10))
+
+        canvas = tk.Canvas(list_container, highlightthickness=0, bg="#ffffff")
+        scrollbar = ttk.Scrollbar(list_container, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        scrollable_frame = ttk.Frame(canvas, padding="6")
+        canvas_window = canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+
+        def _on_canvas_configure(event: Any) -> None:
+            canvas.itemconfig(canvas_window, width=event.width)
+
+        def _on_frame_configure(event: Any) -> None:
+            canvas.configure(scrollregion=canvas.bbox("all"))
+
+        canvas.bind("<Configure>", _on_canvas_configure)
+        scrollable_frame.bind("<Configure>", _on_frame_configure)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        self.checkbox_vars: List[Tuple[Dict[str, Any], tk.BooleanVar]] = []
+
+        for v in self.variants:
+            var_name = v.get("name", "Unknown")
+            gcode_file = v.get("gcode_path") or "no gcode"
+            stats = v.get("stats") or {}
+            stats_parts = []
+            if stats.get("time_s"):
+                stats_parts.append(format_duration(stats["time_s"]))
+            if stats.get("filament_g") is not None:
+                stats_parts.append(f"{stats['filament_g']:.1f}g")
+            if stats.get("cost_usd") is not None:
+                stats_parts.append(f"${stats['cost_usd']:.2f}")
+
+            stats_str = f"  [{' • '.join(stats_parts)}]" if stats_parts else ""
+            clean_name = format_clean_variant_name(var_name)
+            label_text = f"{clean_name}  •  {gcode_file}{stats_str}"
+
+            is_checked = True if not initial_selected else (
+                var_name in initial_selected
+                or gcode_file in initial_selected
+                or clean_name in initial_selected
+                or Path(gcode_file).name in initial_selected
+            )
+            bvar = tk.BooleanVar(value=is_checked)
+            bvar.trace_add("write", lambda *args: self._update_count())
+
+            chk = ttk.Checkbutton(
+                scrollable_frame,
+                text=label_text,
+                variable=bvar,
+            )
+            chk.pack(anchor="w", pady=3, padx=4)
+            self.checkbox_vars.append((v, bvar))
+
+        # Bottom Button Row
+        btn_frame = ttk.Frame(main_frame)
+        btn_frame.pack(fill="x")
+
+        self.launch_btn = ttk.Button(
+            btn_frame,
+            text="🔍 Open in Compare Viewer",
+            style="Primary.TButton",
+            command=self._on_launch,
+        )
+        self.launch_btn.pack(side="right", padx=(6, 0))
+
+        ttk.Button(btn_frame, text="Cancel", command=self.destroy).pack(side="right")
+
+        self._update_count()
+
+    def _update_count(self) -> None:
+        count = sum(1 for _, bvar in self.checkbox_vars if bvar.get())
+        total = len(self.checkbox_vars)
+        self.count_lbl.config(text=f"Selected: {count} of {total}")
+        if count == 0:
+            self.launch_btn.config(state="disabled", text="Select at least 1 variant")
+        elif count > 8:
+            self.launch_btn.config(state="disabled", text=f"Max 8 variants (selected: {count})")
+        else:
+            self.launch_btn.config(state="normal", text=f"🔍 Open in Compare Viewer ({count})")
+
+    def _select_all(self) -> None:
+        for _, bvar in self.checkbox_vars:
+            bvar.set(True)
+
+    def _clear_all(self) -> None:
+        for _, bvar in self.checkbox_vars:
+            bvar.set(False)
+
+    def _on_launch(self) -> None:
+        selected = [v for v, bvar in self.checkbox_vars if bvar.get()]
+        if not selected:
+            return
+        self.destroy()
+        if self.on_confirm:
+            self.on_confirm(selected)
+
+
 class OrcaMatrixApp(tk.Tk):
     """Main OrcaSlicer Matrix Tool Application Window."""
 
@@ -440,6 +595,7 @@ class OrcaMatrixApp(tk.Tk):
         self._last_comparison: Optional[Dict[str, Any]] = None
         self._last_manifest_path: Optional[Path] = None
         self._last_html_report: Optional[Path] = None
+        self._compare_sel_buttons: List[ttk.Button] = []
 
         self._build_main_ui()
 
@@ -625,6 +781,28 @@ class OrcaMatrixApp(tk.Tk):
         self.perm_tree_frame.columnconfigure(0, weight=1)
         self._make_treeview_sortable(self.perm_tree)
 
+        prev_btn_row = ttk.Frame(self.tab_preview)
+        prev_btn_row.pack(fill="x", pady=(4, 0))
+        self.preview_open_all_btn = ttk.Button(
+            prev_btn_row,
+            text="🔍 Open All in Viewer",
+            command=lambda: self._open_compare_viewer(selected_only=False),
+        )
+        self.preview_open_all_btn.pack(side="left", padx=(0, 4))
+        self.preview_open_sel_btn = ttk.Button(
+            prev_btn_row,
+            text="🔍 Open Selected in Viewer...",
+            command=lambda: self._open_compare_viewer(selected_only=True),
+        )
+        self.preview_open_sel_btn.pack(side="left", padx=(0, 4))
+        self.preview_sel_hint_lbl = ttk.Label(
+            prev_btn_row,
+            text="Tip: Ctrl+Click or Shift+Click rows to select a subset",
+            font=("Segoe UI", 8),
+            foreground="#64748b",
+        )
+        self.preview_sel_hint_lbl.pack(side="left", padx=(4, 0))
+
         # --- TAB 1: Summary & Deltas (Image 1) ---
         self.tab_summary = ttk.Frame(self.results_notebook, padding="4")
         self.results_notebook.add(self.tab_summary, text="Summary & Deltas")
@@ -668,8 +846,18 @@ class OrcaMatrixApp(tk.Tk):
         self.copy_summary_btn.pack(side="left", padx=(0, 4))
         self.open_html_btn = ttk.Button(sum_btn_row, text="🌐 Open HTML Report", command=self._open_html_report)
         self.open_html_btn.pack(side="left", padx=(0, 4))
-        self.open_viewer_btn = ttk.Button(sum_btn_row, text="🔍 Open Compare Viewer", command=self._open_compare_viewer)
-        self.open_viewer_btn.pack(side="left")
+        self.open_viewer_btn = ttk.Button(
+            sum_btn_row,
+            text="🔍 Open All in Viewer",
+            command=lambda: self._open_compare_viewer(selected_only=False),
+        )
+        self.open_viewer_btn.pack(side="left", padx=(0, 4))
+        self.open_sel_viewer_btn = ttk.Button(
+            sum_btn_row,
+            text="🔍 Open Selected in Viewer...",
+            command=lambda: self._open_compare_viewer(selected_only=True),
+        )
+        self.open_sel_viewer_btn.pack(side="left")
 
         # --- TAB 2: Filament by Line Type (Image 2) ---
         self.tab_line_types = ttk.Frame(self.results_notebook, padding="4")
@@ -706,7 +894,26 @@ class OrcaMatrixApp(tk.Tk):
         lt_btn_row = ttk.Frame(self.tab_line_types)
         lt_btn_row.pack(fill="x")
         self.copy_lt_btn = ttk.Button(lt_btn_row, text="📋 Copy Line Types Markdown", command=self._copy_line_types_markdown)
-        self.copy_lt_btn.pack(side="left")
+        self.copy_lt_btn.pack(side="left", padx=(0, 4))
+        self.lt_open_sel_btn = ttk.Button(
+            lt_btn_row,
+            text="🔍 Open Selected in Viewer...",
+            command=lambda: self._open_compare_viewer(selected_only=True),
+        )
+        self.lt_open_sel_btn.pack(side="left")
+
+        # Register buttons for dynamic selection count updates
+        self._compare_sel_buttons.extend([
+            self.preview_open_sel_btn,
+            self.open_sel_viewer_btn,
+            self.lt_open_sel_btn,
+        ])
+
+        # Bind row selection, right-click context menu, and double-click to trees
+        for tree in (self.perm_tree, self.summary_tree, self.line_type_tree):
+            tree.bind("<<TreeviewSelect>>", lambda e, t=tree: self._on_tree_selection_changed(t))
+            tree.bind("<Button-3>", lambda e, t=tree: self._on_tree_right_click(e, t))
+            tree.bind("<Double-1>", lambda e, t=tree: self._on_tree_double_click(e, t))
 
         # --- TAB 3: Visual Charts (Canvas) ---
         self.tab_charts = ttk.Frame(self.results_notebook, padding="4")
@@ -1001,15 +1208,258 @@ class OrcaMatrixApp(tk.Tk):
             self.browse_viewer_btn.config(state="disabled")
             self.viewer_status_lbl.config(state="disabled")
 
-    def _open_compare_viewer(self) -> None:
-        """Launch the OrcaSlicer compare viewer on the current manifest."""
-        manifest_path = getattr(self, "_last_manifest_path", None)
-        if not manifest_path or not Path(manifest_path).is_file():
-            messagebox.showinfo(
-                "Compare Viewer",
-                "No completed matrix manifest available yet. Run a matrix slice first.",
+    def _on_tree_selection_changed(self, tree: ttk.Treeview) -> None:
+        """Update compare button labels dynamically based on row selection count."""
+        selected_count = len(tree.selection())
+        if selected_count > 0:
+            btn_text = f"🔍 Open Selected ({selected_count}) in Viewer"
+        else:
+            btn_text = "🔍 Open Selected in Viewer..."
+
+        for btn in getattr(self, "_compare_sel_buttons", []):
+            try:
+                if btn.winfo_exists():
+                    btn.config(text=btn_text)
+            except Exception:
+                pass
+
+    def _on_tree_right_click(self, event: Any, tree: ttk.Treeview) -> None:
+        """Context menu on right-clicking treeview rows."""
+        row_id = tree.identify_row(event.y)
+        if row_id:
+            if row_id not in tree.selection():
+                tree.selection_set(row_id)
+                self._on_tree_selection_changed(tree)
+
+        n = len(tree.selection())
+        menu = tk.Menu(self, tearoff=0)
+        if n > 0:
+            menu.add_command(
+                label=f"🔍 Open Selected ({n}) in Compare Viewer",
+                command=lambda: self._open_compare_viewer(selected_only=True),
+            )
+        menu.add_command(
+            label="🔍 Open All in Compare Viewer",
+            command=lambda: self._open_compare_viewer(selected_only=False),
+        )
+        menu.add_command(
+            label="Select Files / Variants to Compare...",
+            command=self._show_subset_dialog,
+        )
+        menu.add_separator()
+        menu.add_command(
+            label="Select All",
+            command=lambda: (tree.selection_set(tree.get_children()), self._on_tree_selection_changed(tree)),
+        )
+        menu.add_command(
+            label="Clear Selection",
+            command=lambda: (tree.selection_set(()), self._on_tree_selection_changed(tree)),
+        )
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _on_tree_double_click(self, event: Any, tree: ttk.Treeview) -> None:
+        """Double-clicking a row selects it and opens it in compare viewer."""
+        row_id = tree.identify_row(event.y)
+        if row_id:
+            tree.selection_set(row_id)
+            self._on_tree_selection_changed(tree)
+            self._open_compare_viewer(selected_only=True)
+
+    def _get_selected_variant_names(self) -> List[str]:
+        """Return the variant identifiers currently selected across treeviews."""
+        active_tab = None
+        try:
+            active_tab = self.results_notebook.select()
+        except Exception:
+            pass
+
+        trees_to_check = [self.summary_tree, self.perm_tree, self.line_type_tree]
+        if hasattr(self, "tab_preview") and active_tab == str(self.tab_preview):
+            trees_to_check = [self.perm_tree, self.summary_tree, self.line_type_tree]
+        elif hasattr(self, "tab_summary") and active_tab == str(self.tab_summary):
+            trees_to_check = [self.summary_tree, self.perm_tree, self.line_type_tree]
+        elif hasattr(self, "tab_line_types") and active_tab == str(self.tab_line_types):
+            trees_to_check = [self.line_type_tree, self.summary_tree, self.perm_tree]
+
+        for tree in trees_to_check:
+            selected_items = tree.selection()
+            if selected_items:
+                results: List[str] = []
+                for item_id in selected_items:
+                    item_data = tree.item(item_id)
+                    tags = item_data.get("tags") or ()
+                    for t in tags:
+                        results.append(str(t))
+                    vals = item_data.get("values") or ()
+                    for v in vals:
+                        results.append(str(v))
+                return results
+
+        return []
+
+    def _get_selected_variants(self, manifest_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Find matching variants from the manifest based on active tree selection."""
+        variants = manifest_data.get("variants", [])
+        if not variants:
+            return []
+
+        selected_identifiers = set(self._get_selected_variant_names())
+        if not selected_identifiers:
+            return []
+
+        matched: List[Dict[str, Any]] = []
+        for v in variants:
+            name = v.get("name", "")
+            gcode = v.get("gcode_path", "")
+            clean = format_clean_variant_name(name)
+            gcode_name = Path(gcode).name if gcode else ""
+            if (
+                name in selected_identifiers
+                or gcode in selected_identifiers
+                or gcode_name in selected_identifiers
+                or clean in selected_identifiers
+            ):
+                matched.append(v)
+
+        return matched
+
+    def _launch_subset_manifest(
+        self,
+        viewer_exe: Path,
+        manifest_path: Path,
+        manifest_data: Dict[str, Any],
+        selected_variants: List[Dict[str, Any]],
+    ) -> None:
+        """Create a subset manifest and launch compare viewer with selected variants."""
+        if not selected_variants:
+            messagebox.showwarning("Compare Viewer", "Please select at least 1 variant to compare.")
+            return
+
+        if len(selected_variants) > 8:
+            messagebox.showwarning(
+                "Variant Limit Exceeded",
+                f"A maximum of 8 variants can be viewed in compare mode (selected {len(selected_variants)}).\n"
+                "Please reduce your selection to 8 or fewer variants.",
             )
             return
+
+        all_variants = manifest_data.get("variants", [])
+        if len(selected_variants) == len(all_variants):
+            self._log_message(f"[INFO] Launching compare viewer with all {len(all_variants)} variant(s): {viewer_exe}")
+            launch_compare_viewer(viewer_exe, manifest_path)
+            return
+
+        orig_baseline = manifest_data.get("baseline")
+        new_baseline = (
+            orig_baseline
+            if any(v.get("name") == orig_baseline for v in selected_variants)
+            else selected_variants[0].get("name", "")
+        )
+
+        subset_manifest_data = {
+            "schema_version": manifest_data.get("schema_version", 1),
+            "created_utc": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "source": manifest_data.get("source", {}),
+            "baseline": new_baseline,
+            "matrix": manifest_data.get("matrix", {}),
+            "variants": selected_variants,
+        }
+
+        try:
+            from .analytics import compute_matrix_comparison
+            subset_manifest_data["comparison"] = compute_matrix_comparison(selected_variants, new_baseline)
+        except Exception:
+            pass
+
+        subset_path = manifest_path.parent / "manifest_subset.json"
+        try:
+            with open(subset_path, "w", encoding="utf-8") as f:
+                json.dump(subset_manifest_data, f, indent=2)
+        except Exception as e:
+            messagebox.showerror("Compare Viewer", f"Could not write subset manifest:\n{e}")
+            return
+
+        names_summary = ", ".join(format_clean_variant_name(v.get("name", "")) for v in selected_variants)
+        self._log_message(
+            f"[INFO] Launching compare viewer with subset ({len(selected_variants)} of {len(all_variants)} variants): {names_summary}"
+        )
+        launch_compare_viewer(viewer_exe, subset_path)
+
+    def _show_subset_dialog(
+        self,
+        viewer_exe: Optional[Path] = None,
+        manifest_path: Optional[Path] = None,
+        manifest_data: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Open modal dialog allowing the user to select a subset of variants via checkboxes."""
+        if manifest_path is None or manifest_data is None:
+            manifest_path = getattr(self, "_last_manifest_path", None)
+            if not manifest_path or not Path(manifest_path).is_file():
+                candidate = Path(self.output_dir_var.get()) / "manifest.json"
+                if candidate.is_file():
+                    manifest_path = candidate
+                    self._last_manifest_path = candidate
+                else:
+                    messagebox.showinfo(
+                        "Compare Viewer",
+                        "No completed matrix manifest available yet. Run a matrix slice first.",
+                    )
+                    return
+
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest_data = json.load(f)
+            except Exception as e:
+                messagebox.showerror("Compare Viewer", f"Could not read manifest:\n{e}")
+                return
+
+        if viewer_exe is None:
+            explicit_path = self.viewer_path_var.get().strip() or None
+            viewer_exe = find_viewer_executable(explicit_path)
+            if not viewer_exe:
+                messagebox.showerror(
+                    "Compare Viewer",
+                    f"OrcaSlicer executable not found.\n\n"
+                    f"Configured path: {explicit_path or '(None)'}\n\n"
+                    "Please select or browse for a valid orca-slicer.exe under Execution Options.",
+                )
+                return
+
+        variants = manifest_data.get("variants", [])
+        if not variants:
+            messagebox.showwarning("Compare Viewer", "The manifest contains no variants to compare.")
+            return
+
+        initial_selected = set(self._get_selected_variant_names())
+
+        def on_confirm(chosen_variants: List[Dict[str, Any]]) -> None:
+            self._launch_subset_manifest(viewer_exe, manifest_path, manifest_data, chosen_variants)
+
+        SubsetSelectionDialog(
+            self,
+            variants=variants,
+            on_confirm=on_confirm,
+            initial_selected_names=initial_selected,
+        )
+
+    def _open_compare_viewer(self, selected_only: bool = False) -> None:
+        """Launch the OrcaSlicer compare viewer on all or a selected subset of variants."""
+        manifest_path = getattr(self, "_last_manifest_path", None)
+        if not manifest_path or not Path(manifest_path).is_file():
+            candidate = Path(self.output_dir_var.get()) / "manifest.json"
+            if candidate.is_file():
+                manifest_path = candidate
+                self._last_manifest_path = candidate
+            else:
+                messagebox.showinfo(
+                    "Compare Viewer",
+                    "No completed matrix manifest available yet. Run a matrix slice first.",
+                )
+                return
 
         explicit_path = self.viewer_path_var.get().strip() or None
         viewer_exe = find_viewer_executable(explicit_path)
@@ -1022,8 +1472,28 @@ class OrcaMatrixApp(tk.Tk):
             )
             return
 
-        self._log_message(f"[INFO] Launching compare viewer with: {viewer_exe}")
-        launch_compare_viewer(viewer_exe, Path(manifest_path))
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest_data = json.load(f)
+        except Exception as e:
+            messagebox.showerror("Compare Viewer", f"Could not read manifest at {manifest_path}:\n{e}")
+            return
+
+        all_variants = manifest_data.get("variants", [])
+        if not all_variants:
+            messagebox.showwarning("Compare Viewer", "The manifest contains no variants to compare.")
+            return
+
+        if not selected_only:
+            self._log_message(f"[INFO] Launching compare viewer with all {len(all_variants)} variant(s): {viewer_exe}")
+            launch_compare_viewer(viewer_exe, Path(manifest_path))
+            return
+
+        selected_variants = self._get_selected_variants(manifest_data)
+        if selected_variants:
+            self._launch_subset_manifest(viewer_exe, Path(manifest_path), manifest_data, selected_variants)
+        else:
+            self._show_subset_dialog(viewer_exe, Path(manifest_path), manifest_data)
 
     def _log_message(self, message: str) -> None:
         """Append line to the log text widget thread-safely."""
@@ -1210,7 +1680,12 @@ class OrcaMatrixApp(tk.Tk):
                 variants = build_variants(resolved_matrix)
                 for i, v in enumerate(variants, start=1):
                     clean_name = format_clean_variant_name(v.name)
-                    self.perm_tree.insert("", "end", values=(i, clean_name, v.gcode_filename))
+                    self.perm_tree.insert(
+                        "",
+                        "end",
+                        values=(i, clean_name, v.gcode_filename),
+                        tags=(v.name, v.gcode_filename),
+                    )
                 self._make_treeview_sortable(self.perm_tree)
             except Exception as e:
                 self.perm_status_lbl.config(text=f"Error: {e}", foreground="#dc2626")
@@ -1538,6 +2013,7 @@ class OrcaMatrixApp(tk.Tk):
                     r["cost"],
                     r["vs_baseline"],
                 ),
+                tags=(r["name"],),
             )
         self._make_treeview_sortable(self.summary_tree)
 
@@ -1565,7 +2041,7 @@ class OrcaMatrixApp(tk.Tk):
             for r in rows:
                 c_name = r.get("clean_name") or format_clean_variant_name(r["name"])
                 vals = [c_name] + [f"{r['roles'].get(c, 0.0):.2f}g" for c in cols] + [f"{r['total_g']:.1f}g"]
-                self.line_type_tree.insert("", "end", values=vals)
+                self.line_type_tree.insert("", "end", values=vals, tags=(r["name"],))
 
             self._make_treeview_sortable(self.line_type_tree)
 

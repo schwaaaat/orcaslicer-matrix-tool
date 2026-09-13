@@ -9,6 +9,7 @@ from unittest.mock import patch
 from orcaslicer_matrix.gui import (
     DimensionCard,
     OrcaMatrixApp,
+    SubsetSelectionDialog,
     load_user_settings,
     save_user_settings,
 )
@@ -514,6 +515,7 @@ class TestOrcaMatrixApp(unittest.TestCase):
     def test_open_compare_viewer_button(self):
         # When no manifest has run yet
         self.app._last_manifest_path = None
+        self.app.output_dir_var.set(str(Path(tempfile.gettempdir()) / "nonexistent_subfolder_xyz"))
         with patch("tkinter.messagebox.showinfo") as mock_info:
             self.app._open_compare_viewer()
             mock_info.assert_called_once()
@@ -522,6 +524,7 @@ class TestOrcaMatrixApp(unittest.TestCase):
         # When manifest exists but viewer exe cannot be found
         with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as mf:
             manifest_file = Path(mf.name)
+            manifest_file.write_text(json.dumps({"variants": [{"name": "var1"}]}), encoding="utf-8")
         try:
             self.app._last_manifest_path = manifest_file
             self.app.viewer_path_var.set("C:\\does_not_exist\\orca.exe")
@@ -536,7 +539,7 @@ class TestOrcaMatrixApp(unittest.TestCase):
             try:
                 self.app.viewer_path_var.set(str(exe_file))
                 with patch("orcaslicer_matrix.gui.launch_compare_viewer") as mock_launch:
-                    self.app._open_compare_viewer()
+                    self.app._open_compare_viewer(selected_only=False)
                     mock_launch.assert_called_once_with(exe_file, manifest_file)
             finally:
                 exe_file.unlink(missing_ok=True)
@@ -561,6 +564,131 @@ class TestOrcaMatrixApp(unittest.TestCase):
         finally:
             manifest_file.unlink(missing_ok=True)
             exe_file.unlink(missing_ok=True)
+
+    def test_subset_selection_dialog(self):
+        sample_variants = [
+            {"name": "0.16mm / 2 walls", "gcode_path": "var1.gcode", "stats": {"time_s": 3600, "filament_g": 20.0, "cost_usd": 0.40}},
+            {"name": "0.16mm / 3 walls", "gcode_path": "var2.gcode", "stats": {"time_s": 4200, "filament_g": 25.0, "cost_usd": 0.50}},
+            {"name": "0.20mm / 2 walls", "gcode_path": "var3.gcode", "stats": {"time_s": 3000, "filament_g": 18.0, "cost_usd": 0.36}},
+        ]
+        chosen = []
+        def on_confirm(selected):
+            chosen.extend(selected)
+
+        dlg = SubsetSelectionDialog(
+            self.app,
+            variants=sample_variants,
+            on_confirm=on_confirm,
+            initial_selected_names={"0.16mm / 2 walls", "0.20mm / 2 walls"},
+        )
+        self.assertEqual(sum(1 for _, b in dlg.checkbox_vars if b.get()), 2)
+        self.assertIn("Selected: 2 of 3", dlg.count_lbl.cget("text"))
+
+        # Clear all
+        dlg._clear_all()
+        self.assertEqual(sum(1 for _, b in dlg.checkbox_vars if b.get()), 0)
+        self.assertEqual(str(dlg.launch_btn.cget("state")), "disabled")
+
+        # Select all
+        dlg._select_all()
+        self.assertEqual(sum(1 for _, b in dlg.checkbox_vars if b.get()), 3)
+        self.assertEqual(str(dlg.launch_btn.cget("state")), "normal")
+
+        # Uncheck var2 and confirm
+        dlg.checkbox_vars[1][1].set(False)
+        dlg._on_launch()
+        self.assertEqual(len(chosen), 2)
+        self.assertEqual(chosen[0]["name"], "0.16mm / 2 walls")
+        self.assertEqual(chosen[1]["name"], "0.20mm / 2 walls")
+
+    def test_treeview_selection_updates_compare_button_labels(self):
+        # Starts with 0 selected
+        self.assertEqual(self.app.open_sel_viewer_btn.cget("text"), "🔍 Open Selected in Viewer...")
+        self.assertEqual(self.app.preview_open_sel_btn.cget("text"), "🔍 Open Selected in Viewer...")
+
+        # Populate perm_tree items
+        self.app._on_dimensions_changed()
+        children = self.app.perm_tree.get_children()
+        self.assertGreaterEqual(len(children), 2)
+
+        # Select 2 items in perm_tree
+        self.app.perm_tree.selection_set(children[0], children[1])
+        self.app._on_tree_selection_changed(self.app.perm_tree)
+
+        self.assertEqual(self.app.open_sel_viewer_btn.cget("text"), "🔍 Open Selected (2) in Viewer")
+        self.assertEqual(self.app.preview_open_sel_btn.cget("text"), "🔍 Open Selected (2) in Viewer")
+
+        # Clear selection
+        self.app.perm_tree.selection_set(())
+        self.app._on_tree_selection_changed(self.app.perm_tree)
+        self.assertEqual(self.app.open_sel_viewer_btn.cget("text"), "🔍 Open Selected in Viewer...")
+
+    def test_open_compare_viewer_subset_creates_subset_manifest(self):
+        sample_manifest_data = {
+            "schema_version": 1,
+            "created_utc": "2026-09-13T00:00:00Z",
+            "source": {"app": "OrcaSlicer", "app_version": "2.4.2"},
+            "baseline": "0.16mm / 2 walls",
+            "matrix": {"layer_height": ["0.16", "0.20"], "wall_loops": ["2", "3"]},
+            "variants": [
+                {"name": "0.16mm / 2 walls", "gcode_path": "var1.gcode"},
+                {"name": "0.16mm / 3 walls", "gcode_path": "var2.gcode"},
+                {"name": "0.20mm / 2 walls", "gcode_path": "var3.gcode"},
+                {"name": "0.20mm / 3 walls", "gcode_path": "var4.gcode"},
+            ],
+            "comparison": {
+                "summary_rows": [
+                    {"name": "0.16mm / 2 walls", "print_time": "1h", "filament": "10g", "cost": "$0.20", "vs_baseline": "-"},
+                    {"name": "0.16mm / 3 walls", "print_time": "1h 10m", "filament": "12g", "cost": "$0.24", "vs_baseline": "+10m"},
+                    {"name": "0.20mm / 2 walls", "print_time": "50m", "filament": "9g", "cost": "$0.18", "vs_baseline": "-10m"},
+                    {"name": "0.20mm / 3 walls", "print_time": "55m", "filament": "11g", "cost": "$0.22", "vs_baseline": "-5m"},
+                ],
+            },
+        }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            out_dir = Path(tmpdir)
+            main_manifest_path = out_dir / "manifest.json"
+            with open(main_manifest_path, "w", encoding="utf-8") as f:
+                json.dump(sample_manifest_data, f)
+
+            fake_exe = out_dir / "orca-slicer.exe"
+            fake_exe.touch()
+
+            self.app._last_manifest_path = main_manifest_path
+            self.app.viewer_path_var.set(str(fake_exe))
+
+            # Populate summary_tree so rows exist
+            self.app._populate_results_dashboard(sample_manifest_data["comparison"], main_manifest_path)
+            sum_children = self.app.summary_tree.get_children()
+            self.assertEqual(len(sum_children), 4)
+
+            # Select 1st and 3rd variants in summary_tree
+            self.app.summary_tree.selection_set(sum_children[0], sum_children[2])
+
+            with patch("orcaslicer_matrix.gui.launch_compare_viewer") as mock_launch:
+                # Open selected subset
+                self.app._open_compare_viewer(selected_only=True)
+                mock_launch.assert_called_once()
+                called_exe, called_manifest = mock_launch.call_args[0]
+                self.assertEqual(called_exe, fake_exe)
+                self.assertEqual(called_manifest.name, "manifest_subset.json")
+                self.assertTrue(called_manifest.is_file())
+
+                # Inspect subset manifest content
+                with open(called_manifest, "r", encoding="utf-8") as sf:
+                    subset_data = json.load(sf)
+                self.assertEqual(len(subset_data["variants"]), 2)
+                self.assertEqual(subset_data["variants"][0]["name"], "0.16mm / 2 walls")
+                self.assertEqual(subset_data["variants"][1]["name"], "0.20mm / 2 walls")
+                self.assertEqual(subset_data["baseline"], "0.16mm / 2 walls")
+
+            # Test Open All opens the main manifest
+            with patch("orcaslicer_matrix.gui.launch_compare_viewer") as mock_launch_all:
+                self.app._open_compare_viewer(selected_only=False)
+                mock_launch_all.assert_called_once()
+                called_exe, called_manifest = mock_launch_all.call_args[0]
+                self.assertEqual(called_manifest, main_manifest_path)
 
 
 if __name__ == "__main__":
