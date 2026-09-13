@@ -6,8 +6,10 @@ from pathlib import Path
 
 from orcaslicer_matrix.analytics import (
     compute_matrix_comparison,
+    format_compact_label,
     format_duration,
     generate_html_report,
+    get_role_color,
     parse_gcode_filament_by_role,
     signed_mass_delta,
     signed_time_delta,
@@ -42,6 +44,22 @@ class TestAnalyticsHelpers(unittest.TestCase):
         self.assertEqual(signed_mass_delta(0.7), "+0.7g")
         self.assertEqual(signed_mass_delta(-0.3), "-0.3g")
         self.assertEqual(signed_mass_delta(15.26), "+15.3g")
+
+    def test_format_compact_label(self):
+        self.assertEqual(format_compact_label(""), "")
+        self.assertEqual(format_compact_label("layer_height=0.16"), "0.16mm")
+        self.assertEqual(format_compact_label("layer_height=0.16, wall_loops=2"), "0.16mm • 2w")
+        self.assertEqual(format_compact_label("sparse_infill_density=15%"), "15%")
+        self.assertEqual(format_compact_label("wall_generator=arachne"), "arac")
+        self.assertEqual(format_compact_label("seam_position=aligned"), "seam:ali")
+
+    def test_get_role_color(self):
+        c_wall = get_role_color("Inner wall")
+        self.assertTrue(c_wall.startswith("#"))
+        self.assertEqual(len(c_wall), 7)
+        c_unknown = get_role_color("MysteriousCustomFeature")
+        self.assertTrue(c_unknown.startswith("#"))
+        self.assertEqual(len(c_unknown), 7)
 
 
 class TestGcodeLineTypeParser(unittest.TestCase):

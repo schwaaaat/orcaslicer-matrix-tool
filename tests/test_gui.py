@@ -252,15 +252,31 @@ class TestOrcaMatrixApp(unittest.TestCase):
 
         # Test stacked mode
         self.app.chart_type_var.set("stacked")
+        self.app.compact_labels_var.set(True)
         self.app._redraw_charts()
         items_stacked = self.app.charts_canvas.find_all()
         self.assertGreater(len(items_stacked), 0)
+
+        # Toggle compact labels off and redraw
+        self.app.compact_labels_var.set(False)
+        self.app._redraw_charts()
+        self.assertGreater(len(self.app.charts_canvas.find_all()), 0)
+
+        # Test hover motion on stacked chart
+        class MockEvent:
+            x = 150
+            y = 50
+        self.app._on_chart_motion(MockEvent())
 
         # Test pareto mode
         self.app.chart_type_var.set("pareto")
         self.app._redraw_charts()
         items_pareto = self.app.charts_canvas.find_all()
         self.assertGreater(len(items_pareto), 0)
+
+        # Test leave event
+        self.app._on_chart_leave(MockEvent())
+        self.assertIn("Hover over", self.app.chart_hover_lbl.cget("text"))
 
     @patch("tkinter.messagebox.showinfo")
     def test_on_run_complete_loads_manifest_and_populates_dashboard(self, mock_showinfo):

@@ -37,6 +37,75 @@ CANONICAL_ROLE_ORDER = [
     "Other",
 ]
 
+ROLE_COLORS: Dict[str, str] = {
+    "Inner wall": "#2563eb",             # Royal Blue
+    "Outer wall": "#059669",             # Vibrant Emerald
+    "Sparse infill": "#f59e0b",          # Amber
+    "Internal solid infill": "#8b5cf6",  # Purple
+    "Top surface": "#ec4899",            # Pink
+    "Bottom surface": "#6366f1",         # Indigo
+    "Brim": "#64748b",                   # Slate Gray
+    "Support": "#06b6d4",                # Cyan
+    "Support interface": "#0891b2",      # Dark Cyan
+    "Bridge": "#ef4444",                 # Red
+    "Internal Bridge": "#f97316",        # Orange
+    "Gap infill": "#14b8a6",             # Teal
+    "Custom": "#a855f7",                 # Lavender
+    "Other": "#94a3b8",                  # Cool Gray
+}
+
+FALLBACK_PALETTE: List[str] = [
+    "#2563eb", "#059669", "#f59e0b", "#8b5cf6", "#ec4899",
+    "#6366f1", "#64748b", "#06b6d4", "#ef4444", "#14b8a6",
+    "#f97316", "#a855f7",
+]
+
+
+def get_role_color(role: str) -> str:
+    """Return a consistent, high-contrast hex color for a given extrusion role."""
+    if role in ROLE_COLORS:
+        return ROLE_COLORS[role]
+    idx = abs(hash(role)) % len(FALLBACK_PALETTE)
+    return FALLBACK_PALETTE[idx]
+
+
+def format_compact_label(name: str) -> str:
+    """Turn a verbose variant name like 'layer_height=0.16, wall_loops=2' into '0.16mm • 2w'.
+
+    Extracts essential distinguishing values without repeating verbose setting keys.
+    """
+    if not name:
+        return ""
+    parts = [p.strip() for p in name.split(",") if p.strip()]
+    short_parts: List[str] = []
+    for part in parts:
+        if "=" in part:
+            k, v = part.split("=", 1)
+            k = k.strip()
+            v = v.strip()
+            if k == "layer_height":
+                short_parts.append(f"{v}mm" if not v.endswith("mm") else v)
+            elif k == "wall_loops":
+                short_parts.append(f"{v}w")
+            elif k == "sparse_infill_density":
+                short_parts.append(v)
+            elif k == "sparse_infill_pattern":
+                short_parts.append(v)
+            elif k == "wall_generator":
+                short_parts.append(v[:4])
+            elif k == "seam_position":
+                short_parts.append(f"seam:{v[:3]}")
+            elif k == "outer_wall_speed":
+                short_parts.append(f"{v}mm/s" if not v.endswith("mm/s") else v)
+            else:
+                words = k.split("_")
+                k_abbr = "".join(w[0] for w in words if w)[:3] or k[:3]
+                short_parts.append(f"{k_abbr}:{v}")
+        else:
+            short_parts.append(part)
+    return " • ".join(short_parts)
+
+
 
 def format_duration(seconds: Optional[float]) -> str:
     """Format duration in seconds into 'Xh Ym' or 'Ym' or 'Zs'."""
@@ -597,8 +666,8 @@ def _generate_pareto_svg(summary_rows: List[Dict[str, Any]]) -> str:
     min_t, max_t = min(times), max(times)
     min_m, max_m = min(masses), max(masses)
 
-    t_pad = max(5, (max_t - min_t) * 0.15)
-    m_pad = max(1, (max_m - min_m) * 0.15)
+    t_pad = max(4, (max_t - min_t) * 0.18)
+    m_pad = max(0.6, (max_m - min_m) * 0.18)
 
     y_min, y_max = max(0, min_t - t_pad), max_t + t_pad
     x_min, x_max = max(0, min_m - m_pad), max_m + m_pad
@@ -614,6 +683,32 @@ def _generate_pareto_svg(summary_rows: List[Dict[str, Any]]) -> str:
     def to_y(t: float) -> float:
         return margin_t + plot_h - ((t - y_min) / (y_max - y_min + 1e-6)) * plot_h
 
+    # Grid lines & ticks
+    x_ticks = [x_min + (x_max - x_min) * (i / 4.0) for i in range(5)]
+    y_ticks = [y_min + (y_max - y_min) * (i / 4.0) for i in range(5)]
+
+    svg = f"""<svg viewBox="0 0 {width} {height}" style="width: 100%; max-width: 800px; height: auto;">
+  <!-- Grid Lines -->
+"""
+    for xt in x_ticks:
+        gx = to_x(xt)
+        svg += f"""  <line x1="{gx:.1f}" y1="{margin_t}" x2="{gx:.1f}" y2="{margin_t + plot_h}" stroke="#334155" stroke-width="1" stroke-dasharray="3,3"/>\n"""
+        svg += f"""  <text x="{gx:.1f}" y="{margin_t + plot_h + 16}" fill="#94a3b8" font-size="10" text-anchor="middle">{xt:.1f}g</text>\n"""
+
+    for yt in y_ticks:
+        gy = to_y(yt)
+        svg += f"""  <line x1="{margin_l}" y1="{gy:.1f}" x2="{margin_l + plot_w}" y2="{gy:.1f}" stroke="#334155" stroke-width="1" stroke-dasharray="3,3"/>\n"""
+        svg += f"""  <text x="{margin_l - 8}" y="{gy + 4:.1f}" fill="#94a3b8" font-size="10" text-anchor="end">{int(round(yt))}m</text>\n"""
+
+    svg += f"""  <!-- Axes -->
+  <line x1="{margin_l}" y1="{margin_t + plot_h}" x2="{margin_l + plot_w}" y2="{margin_t + plot_h}" stroke="#64748b" stroke-width="1.5"/>
+  <line x1="{margin_l}" y1="{margin_t}" x2="{margin_l}" y2="{margin_t + plot_h}" stroke="#64748b" stroke-width="1.5"/>
+
+  <!-- Axis Labels -->
+  <text x="{margin_l + plot_w / 2}" y="{height - 6}" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">Filament Mass (grams)</text>
+  <text transform="rotate(-90)" x="-{margin_t + plot_h / 2}" y="16" fill="#cbd5e1" font-size="11" font-weight="600" text-anchor="middle">Print Time (minutes)</text>
+"""
+
     # Sort to draw Pareto frontier line
     pts_sorted = sorted(valid_pts, key=lambda p: (p["filament_g"], p["time_s"]))
     frontier = []
@@ -625,18 +720,8 @@ def _generate_pareto_svg(summary_rows: List[Dict[str, Any]]) -> str:
             curr_min_t = t_val
 
     frontier_poly = " ".join(f"{to_x(m):.1f},{to_y(t):.1f}" for m, t in frontier)
-
-    svg = f"""<svg viewBox="0 0 {width} {height}" style="width: 100%; max-width: 800px; height: auto;">
-  <!-- Grid Lines -->
-  <line x1="{margin_l}" y1="{margin_t + plot_h}" x2="{margin_l + plot_w}" y2="{margin_t + plot_h}" stroke="#475569" stroke-width="1.5"/>
-  <line x1="{margin_l}" y1="{margin_t}" x2="{margin_l}" y2="{margin_t + plot_h}" stroke="#475569" stroke-width="1.5"/>
-
-  <!-- Axis Labels -->
-  <text x="{margin_l + plot_w / 2}" y="{height - 8}" fill="#94a3b8" font-size="12" text-anchor="middle">Filament Used (grams)</text>
-  <text transform="rotate(-90)" x="-{margin_t + plot_h / 2}" y="20" fill="#94a3b8" font-size="12" text-anchor="middle">Print Time (minutes)</text>
-
-  <!-- Pareto Frontier Curve -->
-  <polyline points="{frontier_poly}" fill="none" stroke="#38bdf8" stroke-width="2" stroke-dasharray="4,4" opacity="0.8"/>
+    svg += f"""  <!-- Pareto Frontier Curve -->
+  <polyline points="{frontier_poly}" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-dasharray="4,4" opacity="0.9"/>
 """
 
     for p in valid_pts:
@@ -644,9 +729,9 @@ def _generate_pareto_svg(summary_rows: List[Dict[str, Any]]) -> str:
         m_g = p["filament_g"]
         cx = to_x(m_g)
         cy = to_y(t_m)
-        is_base = p["is_baseline"]
-        is_rec = p["is_recommended"]
-        is_fast = p["is_fastest"]
+        is_base = p.get("is_baseline", False)
+        is_rec = p.get("is_recommended", False)
+        is_fast = p.get("is_fastest", False)
 
         col = "#38bdf8"
         r_size = 6
@@ -660,9 +745,21 @@ def _generate_pareto_svg(summary_rows: List[Dict[str, Any]]) -> str:
             col = "#34d399"
             r_size = 8
 
-        svg += f"""
-  <circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_size}" fill="{col}" stroke="#0f172a" stroke-width="1.5"/>
-  <text x="{cx + 10:.1f}" y="{cy + 4:.1f}" fill="#f8fafc" font-size="11" font-weight="600">{p['name'][:18]}</text>
+        lbl = format_compact_label(p["name"])
+        if is_base:
+            lbl += " (base)"
+        elif is_fast:
+            lbl += " ★"
+        elif is_rec:
+            lbl += " ★ rec"
+
+        tooltip = f"{p['name']}&#10;Time: {p['print_time']}&#10;Filament: {p['filament']}&#10;Cost: {p['cost']}"
+        svg += f"""  <g>
+    <circle cx="{cx:.1f}" cy="{cy:.1f}" r="{r_size}" fill="{col}" stroke="#0f172a" stroke-width="2">
+      <title>{tooltip}</title>
+    </circle>
+    <text x="{cx + 10:.1f}" y="{cy + 4:.1f}" fill="#f8fafc" font-size="11" font-weight="600">{lbl}</text>
+  </g>
 """
 
     svg += "</svg>"
@@ -677,53 +774,52 @@ def _generate_stacked_bars_svg(
     if not lt_rows or not columns:
         return "<p style='color:#94a3b8;'>No line type data available.</p>"
 
-    palette = [
-        "#3b82f6",  # Inner wall - Blue
-        "#10b981",  # Outer wall - Emerald
-        "#f59e0b",  # Infill - Amber
-        "#8b5cf6",  # Solid infill - Purple
-        "#ec4899",  # Top surface - Pink
-        "#64748b",  # Brim - Slate
-        "#06b6d4",  # Support - Cyan
-        "#d97706",  # Bridge
-        "#94a3b8",  # Other
-    ]
-
-    role_colors = {col: palette[i % len(palette)] for i, col in enumerate(columns)}
-
-    bar_h = 24
-    bar_gap = 14
-    margin_l = 190
-    margin_r = 40
-    margin_t = 30
-    margin_b = 40
+    # Multi-row wrapping legend
     width = 760
-    height = margin_t + len(lt_rows) * (bar_h + bar_gap) + margin_b
+    margin_l = 170
+    margin_r = 55
+    margin_b = 25
     plot_w = width - margin_l - margin_r
+
+    leg_items = []
+    curr_leg_x = margin_l
+    curr_leg_y = 12
+    line_h = 18
+
+    for col in columns:
+        c = get_role_color(col)
+        item_w = len(col) * 7 + 28
+        if curr_leg_x + item_w > width - margin_r and curr_leg_x > margin_l:
+            curr_leg_x = margin_l
+            curr_leg_y += line_h
+        leg_items.append((col, c, curr_leg_x, curr_leg_y))
+        curr_leg_x += item_w
+
+    margin_t = curr_leg_y + 24
+    bar_h = 24
+    bar_gap = 12
+    height = margin_t + len(lt_rows) * (bar_h + bar_gap) + margin_b
 
     max_mass = max(r["total_g"] for r in lt_rows) if lt_rows else 100.0
     scale = plot_w / (max_mass + 1e-6)
 
     svg = f"""<svg viewBox="0 0 {width} {height}" style="width: 100%; max-width: 800px; height: auto;">
   <!-- Legend -->
-  <g transform="translate({margin_l}, 12)">
+  <g>
 """
-    leg_x = 0
-    for col in columns[:6]:
-        c = role_colors.get(col, "#94a3b8")
-        svg += f"""    <rect x="{leg_x}" y="0" width="10" height="10" fill="{c}" rx="2"/>
-    <text x="{leg_x + 14}" y="9" fill="#cbd5e1" font-size="10">{col[:14]}</text>
+    for col, c, lx, ly in leg_items:
+        svg += f"""    <rect x="{lx}" y="{ly - 9}" width="10" height="10" fill="{c}" rx="2"/>
+    <text x="{lx + 14}" y="{ly}" fill="#cbd5e1" font-size="10">{col}</text>
 """
-        leg_x += len(col[:14]) * 7 + 28
     svg += "  </g>\n"
 
     for i, row in enumerate(lt_rows):
         y = margin_t + i * (bar_h + bar_gap)
         name = row["name"]
+        compact_name = format_compact_label(name) or name
         total = row["total_g"]
 
-        svg += f"""  <text x="{margin_l - 10}" y="{y + 16}" fill="#f8fafc" font-size="11" text-anchor="end" font-weight="600">{name[:24]}</text>
-  <rect x="{margin_l}" y="{y}" width="{plot_w}" height="{bar_h}" fill="#1e293b" rx="4"/>
+        svg += f"""  <text x="{margin_l - 10}" y="{y + 16}" fill="#f8fafc" font-size="11" text-anchor="end" font-weight="600">{compact_name}</text>
 """
         curr_x = margin_l
         for col in columns:
@@ -731,11 +827,21 @@ def _generate_stacked_bars_svg(
             if val <= 0.001:
                 continue
             seg_w = val * scale
-            c = role_colors.get(col, "#94a3b8")
-            svg += f"""  <rect x="{curr_x:.1f}" y="{y}" width="{seg_w:.1f}" height="{bar_h}" fill="{c}" />\n"""
+            c = get_role_color(col)
+            pct = (val / total * 100.0) if total > 0 else 0.0
+            tooltip = f"{compact_name}&#10;{col}: {val:.2f}g ({pct:.1f}%)&#10;Total: {total:.1f}g"
+            svg += f"""  <rect x="{curr_x:.1f}" y="{y}" width="{seg_w:.1f}" height="{bar_h}" fill="{c}">
+    <title>{tooltip}</title>
+  </rect>
+"""
+            # Label inside segment if wide enough
+            if seg_w >= 28:
+                svg += f"""  <text x="{curr_x + seg_w / 2:.1f}" y="{y + 16}" fill="#ffffff" font-size="10" font-weight="600" text-anchor="middle">{val:.1f}g</text>\n"""
             curr_x += seg_w
 
-        svg += f"""  <text x="{curr_x + 8:.1f}" y="{y + 16}" fill="#94a3b8" font-size="11">{total:.1f}g</text>\n"""
+        # Right-aligned total mass
+        svg += f"""  <text x="{width - 15}" y="{y + 16}" fill="#94a3b8" font-size="11" font-weight="600" text-anchor="end">{total:.1f}g</text>\n"""
 
     svg += "</svg>"
     return svg
+

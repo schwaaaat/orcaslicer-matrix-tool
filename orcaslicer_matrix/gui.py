@@ -32,6 +32,7 @@ from .matrix import (
 )
 from .runner import MatrixRunner, format_duration
 from .cli import find_viewer_executable, launch_compare_viewer
+from .analytics import ROLE_COLORS, format_compact_label, get_role_color
 
 
 # Enable DPI awareness on Windows if available
@@ -645,14 +646,28 @@ class OrcaMatrixApp(tk.Tk):
         self.results_notebook.add(self.tab_charts, text="Visual Charts")
 
         chart_controls_row = ttk.Frame(self.tab_charts)
-        chart_controls_row.pack(fill="x", pady=(0, 2))
+        chart_controls_row.pack(fill="x", pady=(0, 4))
         self.chart_type_var = tk.StringVar(value="stacked")
         ttk.Radiobutton(chart_controls_row, text="Filament Breakdown (Stacked)", variable=self.chart_type_var, value="stacked", command=self._redraw_charts).pack(side="left", padx=(0, 8))
         ttk.Radiobutton(chart_controls_row, text="Pareto Frontier (Time vs Material)", variable=self.chart_type_var, value="pareto", command=self._redraw_charts).pack(side="left")
 
-        self.charts_canvas = tk.Canvas(self.tab_charts, height=180, background="#1e293b", highlightthickness=0)
+        self.compact_labels_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(chart_controls_row, text="Compact Labels", variable=self.compact_labels_var, command=self._redraw_charts).pack(side="right")
+
+        self._chart_hover_items: List[Dict[str, Any]] = []
+        self.charts_canvas = tk.Canvas(self.tab_charts, height=230, background="#1e293b", highlightthickness=0)
         self.charts_canvas.pack(fill="both", expand=True)
         self.charts_canvas.bind("<Configure>", lambda e: self._redraw_charts())
+        self.charts_canvas.bind("<Motion>", self._on_chart_motion)
+        self.charts_canvas.bind("<Leave>", self._on_chart_leave)
+
+        self.chart_hover_lbl = ttk.Label(
+            self.tab_charts,
+            text="Hover over any bar segment or chart point to inspect detailed metrics.",
+            font=("Segoe UI", 8),
+            foreground="#94a3b8",
+        )
+        self.chart_hover_lbl.pack(fill="x", pady=(3, 1))
 
         # Output & Options Frame
         opts_frame = ttk.LabelFrame(right_frame, text="Execution Options", padding="10")
@@ -1260,81 +1275,183 @@ class OrcaMatrixApp(tk.Tk):
 
     def _draw_stacked_bar_chart(self) -> None:
         """Render horizontal stacked bars on Tkinter canvas for filament breakdown."""
+        if self._is_destroyed or not self.charts_canvas.winfo_exists():
+            return
+
         self.charts_canvas.delete("all")
-        w = self.charts_canvas.winfo_width() or 480
-        h = self.charts_canvas.winfo_height() or 180
+        self._chart_hover_items = []
+        w = self.charts_canvas.winfo_width() or 520
+        h = self.charts_canvas.winfo_height() or 230
+
+        if not hasattr(self, "_last_comparison") or not self._last_comparison:
+            self.charts_canvas.create_text(
+                w / 2,
+                h / 2,
+                text="Slice matrix variants to render visual charts.",
+                fill="#94a3b8",
+                font=("Segoe UI", 9, "italic"),
+            )
+            return
 
         lt_data = self._last_comparison.get("line_type_matrix", {})
         columns = lt_data.get("columns", [])
         rows = lt_data.get("rows", [])
         if not rows or not columns:
+            self.charts_canvas.create_text(
+                w / 2,
+                h / 2,
+                text="No filament line-type data available for current variants.",
+                fill="#94a3b8",
+                font=("Segoe UI", 9, "italic"),
+            )
             return
 
-        palette = [
-            "#3b82f6",  # Inner wall - Blue
-            "#10b981",  # Outer wall - Emerald
-            "#f59e0b",  # Infill - Amber
-            "#8b5cf6",  # Solid infill - Purple
-            "#ec4899",  # Top surface - Pink
-            "#64748b",  # Brim - Slate
-            "#06b6d4",  # Support - Cyan
-            "#d97706",  # Bridge
-        ]
-        color_map = {col: palette[i % len(palette)] for i, col in enumerate(columns)}
+        # 1. Responsive multi-row wrapping legend at top
+        leg_x = 12
+        leg_y = 10
+        leg_line_h = 16
+        for col in columns:
+            c = get_role_color(col)
+            item_w = len(col) * 6 + 22
+            if leg_x + item_w > w - 12 and leg_x > 12:
+                leg_x = 12
+                leg_y += leg_line_h
+            self.charts_canvas.create_rectangle(leg_x, leg_y, leg_x + 9, leg_y + 9, fill=c, outline="")
+            self.charts_canvas.create_text(leg_x + 13, leg_y + 4, text=col, fill="#cbd5e1", font=("Segoe UI", 8), anchor="w")
+            leg_x += item_w + 10
 
-        # Legend at top
-        leg_x = 10
-        for col in columns[:5]:
-            c = color_map[col]
-            self.charts_canvas.create_rectangle(leg_x, 8, leg_x + 9, 17, fill=c, outline="")
-            self.charts_canvas.create_text(leg_x + 13, 12, text=col[:10], fill="#cbd5e1", font=("Segoe UI", 8), anchor="w")
-            leg_x += len(col[:10]) * 6 + 24
+        legend_bottom = leg_y + 16
 
-        bar_h = min(22, max(12, int((h - 35) / len(rows) - 6)))
-        bar_gap = 6
-        start_y = 28
-        margin_l = 150
-        margin_r = 50
+        # 2. Dynamic margin based on Compact Labels toggle
+        compact = self.compact_labels_var.get() if hasattr(self, "compact_labels_var") else True
+        margin_l = max(110, min(150, int(w * 0.26))) if compact else max(160, min(240, int(w * 0.40)))
+        margin_r = 52
         plot_w = max(100, w - margin_l - margin_r)
+
+        # 3. Bar heights and layout
+        avail_h = max(60, h - legend_bottom - 10)
+        num_rows = len(rows)
+        bar_h = min(22, max(12, int(avail_h / num_rows) - 6))
+        bar_gap = max(4, int((avail_h - (bar_h * num_rows)) / max(1, num_rows)))
+        start_y = legend_bottom + 6
 
         max_mass = max(r["total_g"] for r in rows) if rows else 100.0
         scale = plot_w / (max_mass + 1e-6)
 
+        # 4. Render each variant's bar
         for i, r in enumerate(rows):
             y = start_y + i * (bar_h + bar_gap)
             name = r["name"]
-            if len(name) > 20:
-                name = name[:18] + ".."
-            self.charts_canvas.create_text(margin_l - 8, y + bar_h / 2, text=name, fill="#f8fafc", font=("Segoe UI", 8, "bold"), anchor="e")
+            total = r["total_g"]
 
-            # Background bar
-            self.charts_canvas.create_rectangle(margin_l, y, margin_l + plot_w, y + bar_h, fill="#0f172a", outline="")
+            disp_label = format_compact_label(name) if compact else name
+            if not compact and len(disp_label) > 28:
+                disp_label = disp_label[:26] + ".."
 
-            # Color-coded segments
+            self.charts_canvas.create_text(
+                margin_l - 8,
+                y + bar_h / 2,
+                text=disp_label,
+                fill="#f8fafc",
+                font=("Segoe UI", 8, "bold"),
+                anchor="e",
+            )
+
+            # Subtle background track
+            self.charts_canvas.create_rectangle(
+                margin_l,
+                y,
+                margin_l + plot_w,
+                y + bar_h,
+                fill="#0f172a",
+                outline="#334155",
+                width=1,
+            )
+
             curr_x = margin_l
             for col in columns:
                 val = r["roles"].get(col, 0.0)
                 if val <= 0.001:
                     continue
                 seg_w = val * scale
-                c = color_map.get(col, "#94a3b8")
-                self.charts_canvas.create_rectangle(curr_x, y, curr_x + seg_w, y + bar_h, fill=c, outline="")
+                c = get_role_color(col)
+                self.charts_canvas.create_rectangle(
+                    curr_x,
+                    y,
+                    curr_x + seg_w,
+                    y + bar_h,
+                    fill=c,
+                    outline="#0f172a",
+                    width=1,
+                )
+
+                pct = (val / total * 100.0) if total > 0 else 0.0
+                self._chart_hover_items.append({
+                    "type": "segment",
+                    "bbox": (curr_x, y, curr_x + seg_w, y + bar_h),
+                    "variant": name,
+                    "compact_variant": disp_label,
+                    "role": col,
+                    "mass": val,
+                    "total": total,
+                    "pct": pct,
+                })
+
+                if seg_w >= 28:
+                    self.charts_canvas.create_text(
+                        curr_x + seg_w / 2,
+                        y + bar_h / 2,
+                        text=f"{val:.1f}g",
+                        fill="#ffffff",
+                        font=("Segoe UI", 7, "bold"),
+                        anchor="center",
+                    )
+
                 curr_x += seg_w
 
-            self.charts_canvas.create_text(curr_x + 6, y + bar_h / 2, text=f"{r['total_g']:.1f}g", fill="#94a3b8", font=("Segoe UI", 8), anchor="w")
+            # Total mass right-aligned in dedicated column
+            self.charts_canvas.create_text(
+                w - 6,
+                y + bar_h / 2,
+                text=f"{total:.1f}g",
+                fill="#cbd5e1",
+                font=("Segoe UI", 8, "bold"),
+                anchor="e",
+            )
 
     def _draw_pareto_chart(self) -> None:
         """Render 2D Pareto frontier scatter plot on Tkinter canvas."""
+        if self._is_destroyed or not self.charts_canvas.winfo_exists():
+            return
+
         self.charts_canvas.delete("all")
-        w = self.charts_canvas.winfo_width() or 480
-        h = self.charts_canvas.winfo_height() or 180
+        self._chart_hover_items = []
+        w = self.charts_canvas.winfo_width() or 520
+        h = self.charts_canvas.winfo_height() or 230
+
+        if not hasattr(self, "_last_comparison") or not self._last_comparison:
+            self.charts_canvas.create_text(
+                w / 2,
+                h / 2,
+                text="Slice matrix variants to render visual charts.",
+                fill="#94a3b8",
+                font=("Segoe UI", 9, "italic"),
+            )
+            return
 
         summary_rows = self._last_comparison.get("summary_rows", [])
         valid_pts = [r for r in summary_rows if r.get("time_s") and r.get("filament_g") and not r.get("error")]
         if not valid_pts:
+            self.charts_canvas.create_text(
+                w / 2,
+                h / 2,
+                text="Not enough data points for Pareto analysis.",
+                fill="#94a3b8",
+                font=("Segoe UI", 9, "italic"),
+            )
             return
 
-        margin_l, margin_r, margin_t, margin_b = 55, 30, 20, 25
+        margin_l, margin_r, margin_t, margin_b = 60, 30, 22, 34
         plot_w = max(100, w - margin_l - margin_r)
         plot_h = max(60, h - margin_t - margin_b)
 
@@ -1344,7 +1461,7 @@ class OrcaMatrixApp(tk.Tk):
         min_t, max_t = min(times), max(times)
         min_m, max_m = min(masses), max(masses)
         t_pad = max(2, (max_t - min_t) * 0.2)
-        m_pad = max(0.5, (max_m - min_m) * 0.2)
+        m_pad = max(0.4, (max_m - min_m) * 0.2)
 
         x_min, x_max = max(0, min_m - m_pad), max_m + m_pad
         y_min, y_max = max(0, min_t - t_pad), max_t + t_pad
@@ -1355,11 +1472,24 @@ class OrcaMatrixApp(tk.Tk):
         def to_y(t: float) -> float:
             return margin_t + plot_h - ((t - y_min) / (y_max - y_min + 1e-6)) * plot_h
 
+        # Grid lines and ticks
+        for i in range(4):
+            xt = x_min + (x_max - x_min) * (i / 3.0)
+            gx = to_x(xt)
+            self.charts_canvas.create_line(gx, margin_t, gx, margin_t + plot_h, fill="#334155", dash=(2, 3))
+            self.charts_canvas.create_text(gx, margin_t + plot_h + 10, text=f"{xt:.1f}g", fill="#94a3b8", font=("Segoe UI", 7))
+
+        for i in range(4):
+            yt = y_min + (y_max - y_min) * (i / 3.0)
+            gy = to_y(yt)
+            self.charts_canvas.create_line(margin_l, gy, margin_l + plot_w, gy, fill="#334155", dash=(2, 3))
+            self.charts_canvas.create_text(margin_l - 6, gy, text=format_duration(yt * 60), fill="#94a3b8", font=("Segoe UI", 7), anchor="e")
+
         # Axes
-        self.charts_canvas.create_line(margin_l, margin_t + plot_h, margin_l + plot_w, margin_t + plot_h, fill="#475569")
-        self.charts_canvas.create_line(margin_l, margin_t, margin_l, margin_t + plot_h, fill="#475569")
-        self.charts_canvas.create_text(margin_l + plot_w / 2, h - 8, text="Filament Mass (g) →", fill="#94a3b8", font=("Segoe UI", 8))
-        self.charts_canvas.create_text(25, margin_t + plot_h / 2, text="Time\n(min)", fill="#94a3b8", font=("Segoe UI", 7), justify="center")
+        self.charts_canvas.create_line(margin_l, margin_t + plot_h, margin_l + plot_w, margin_t + plot_h, fill="#64748b", width=1.5)
+        self.charts_canvas.create_line(margin_l, margin_t, margin_l, margin_t + plot_h, fill="#64748b", width=1.5)
+        self.charts_canvas.create_text(margin_l + plot_w / 2, h - 6, text="Filament Mass (g) → (lower is better)", fill="#cbd5e1", font=("Segoe UI", 8, "bold"))
+        self.charts_canvas.create_text(16, margin_t + plot_h / 2, text="Time\n↓\n(faster)", fill="#cbd5e1", font=("Segoe UI", 7, "bold"), justify="center")
 
         # Pareto Frontier Line
         pts_sorted = sorted(valid_pts, key=lambda p: (p["filament_g"], p["time_s"]))
@@ -1375,29 +1505,108 @@ class OrcaMatrixApp(tk.Tk):
             for j in range(len(frontier) - 1):
                 x1, y1 = to_x(frontier[j][0]), to_y(frontier[j][1])
                 x2, y2 = to_x(frontier[j + 1][0]), to_y(frontier[j + 1][1])
-                self.charts_canvas.create_line(x1, y1, x2, y2, fill="#38bdf8", dash=(3, 3), width=1)
+                self.charts_canvas.create_line(x1, y1, x2, y2, fill="#38bdf8", dash=(3, 3), width=2)
 
+        compact = self.compact_labels_var.get() if hasattr(self, "compact_labels_var") else True
         # Plot points
         for p in valid_pts:
             cx = to_x(p["filament_g"])
             cy = to_y(p["time_s"] / 60.0)
-            col = "#38bdf8"
-            rad = 4
-            if p["is_baseline"]:
-                col = "#60a5fa"
-                rad = 5
-            if p["is_fastest"]:
-                col = "#fbbf24"
-                rad = 6
-            if p["is_recommended"]:
-                col = "#34d399"
-                rad = 6
+            is_base = p.get("is_baseline", False)
+            is_fast = p.get("is_fastest", False)
+            is_rec = p.get("is_recommended", False)
 
-            self.charts_canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=col, outline="#0f172a", width=1)
-            lbl = p["name"]
-            if len(lbl) > 12:
-                lbl = lbl[:10] + ".."
-            self.charts_canvas.create_text(cx + rad + 3, cy - 2, text=lbl, fill="#f8fafc", font=("Segoe UI", 7, "bold"), anchor="w")
+            col = "#38bdf8"
+            rad = 5
+            if is_base:
+                col = "#60a5fa"
+                rad = 6
+            if is_fast:
+                col = "#fbbf24"
+                rad = 7
+            if is_rec:
+                col = "#34d399"
+                rad = 7
+
+            self.charts_canvas.create_oval(cx - rad, cy - rad, cx + rad, cy + rad, fill=col, outline="#0f172a", width=1.5)
+
+            lbl = format_compact_label(p["name"]) if compact else p["name"]
+            if is_base:
+                lbl += " (base)"
+            elif is_fast:
+                lbl += " ★"
+            elif is_rec:
+                lbl += " ★ rec"
+
+            if not compact and len(lbl) > 16:
+                lbl = lbl[:14] + ".."
+
+            self.charts_canvas.create_text(cx + rad + 4, cy - 2, text=lbl, fill="#f8fafc", font=("Segoe UI", 7, "bold"), anchor="w")
+
+            self._chart_hover_items.append({
+                "type": "point",
+                "cx": cx,
+                "cy": cy,
+                "radius": 12,
+                "data": p,
+            })
+
+    def _on_chart_motion(self, event: Any) -> None:
+        """Update hover detail label when mouse moves over chart elements."""
+        if not hasattr(self, "_chart_hover_items") or not self._chart_hover_items:
+            return
+
+        mx, my = event.x, event.y
+        mode = self.chart_type_var.get()
+
+        if mode == "stacked":
+            for item in self._chart_hover_items:
+                if item["type"] == "segment":
+                    x1, y1, x2, y2 = item["bbox"]
+                    if x1 <= mx <= x2 and y1 <= my <= y2:
+                        var = item["compact_variant"]
+                        role = item["role"]
+                        mass = item["mass"]
+                        pct = item["pct"]
+                        total = item["total"]
+                        self.chart_hover_lbl.config(
+                            text=f"📊 {var}  •  {role}: {mass:.2f}g ({pct:.1f}%)  •  Total: {total:.1f}g",
+                            foreground="#38bdf8",
+                        )
+                        return
+            self.chart_hover_lbl.config(
+                text="Hover over any bar segment or chart point to inspect detailed metrics.",
+                foreground="#94a3b8",
+            )
+        else:
+            for item in self._chart_hover_items:
+                if item["type"] == "point":
+                    dist_sq = (mx - item["cx"]) ** 2 + (my - item["cy"]) ** 2
+                    if dist_sq <= item["radius"] ** 2:
+                        p = item["data"]
+                        name = p.get("name", "")
+                        compact_n = format_compact_label(name)
+                        t_str = p.get("print_time", "-")
+                        f_str = p.get("filament", "-")
+                        c_str = p.get("cost", "-")
+                        vs_b = p.get("vs_baseline", "-")
+                        self.chart_hover_lbl.config(
+                            text=f"🎯 {compact_n} ({name})  •  Time: {t_str}  •  Filament: {f_str}  •  Cost: {c_str}  •  vs Base: {vs_b}",
+                            foreground="#38bdf8",
+                        )
+                        return
+            self.chart_hover_lbl.config(
+                text="Hover over any bar segment or chart point to inspect detailed metrics.",
+                foreground="#94a3b8",
+            )
+
+    def _on_chart_leave(self, event: Any) -> None:
+        """Reset hover detail label when mouse leaves canvas."""
+        if hasattr(self, "chart_hover_lbl"):
+            self.chart_hover_lbl.config(
+                text="Hover over any bar segment or chart point to inspect detailed metrics.",
+                foreground="#94a3b8",
+            )
 
     def _on_run_error(self, error_str: str) -> None:
         if self._is_destroyed:
