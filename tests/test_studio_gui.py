@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from orcaslicer_matrix.studio import MatrixStudioWindow, _is_local_endpoint
+from orcaslicer_matrix.studio import MatrixStudioWindow, ResultsChart, _is_local_endpoint
 
 
 @pytest.fixture
@@ -44,3 +44,13 @@ def test_local_endpoint_detection():
     assert _is_local_endpoint("http://localhost:13130")
     assert _is_local_endpoint("http://[::1]:13130")
     assert not _is_local_endpoint("https://slicer.example.test")
+
+
+def test_results_chart_renders_without_qtcharts(qtbot):
+    chart = ResultsChart()
+    qtbot.addWidget(chart)
+    chart.resize(640, 260)
+    chart.set_values([1.5, 2.25, 0.75], ["1", "2", "3"], dark=True)
+    image = chart.grab().toImage()
+    assert not image.isNull()
+    assert image.width() == 640

@@ -17,7 +17,6 @@ from urllib.parse import urlsplit
 
 import keyring
 from keyring.errors import KeyringError, PasswordDeleteError
-from PySide6.QtCharts import QBarCategoryAxis, QBarSeries, QBarSet, QChart, QChartView, QValueAxis
 from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
@@ -229,6 +228,65 @@ class RunWorker(QObject):
     def cancel(self) -> None:
         if self.runner:
             self.runner.cancel()
+
+
+class ResultsChart(QWidget):
+    """Small dependency-free bar chart drawn with QtGui only."""
+
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self._values: List[float] = []
+        self._labels: List[str] = []
+        self._dark = True
+        self.setMinimumHeight(240)
+
+    def set_values(self, values: List[float], labels: List[str], dark: bool) -> None:
+        self._values = values
+        self._labels = labels
+        self._dark = dark
+        self.update()
+
+    def paintEvent(self, event: object) -> None:  # noqa: N802 - Qt virtual method name
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        foreground = QColor("#dce3ea" if self._dark else "#26323b")
+        muted = QColor("#85919d" if self._dark else "#66737e")
+        grid = QColor("#303842" if self._dark else "#d8e0e6")
+        accent = QColor("#38c7a4" if self._dark else "#15977f")
+        painter.setPen(foreground)
+        painter.setFont(QFont("Segoe UI", 11, QFont.Weight.DemiBold))
+        painter.drawText(18, 26, "Print-time comparison")
+
+        left, top, right, bottom = 58, 44, self.width() - 18, self.height() - 38
+        plot_width = max(1, right - left)
+        plot_height = max(1, bottom - top)
+        maximum = max(self._values, default=0.0)
+        maximum = max(maximum, 1.0)
+        painter.setFont(QFont("Segoe UI", 8))
+
+        for tick in range(5):
+            y = bottom - round(plot_height * tick / 4)
+            painter.setPen(grid)
+            painter.drawLine(left, y, right, y)
+            painter.setPen(muted)
+            painter.drawText(4, y + 4, f"{maximum * tick / 4:.1f}")
+
+        if not self._values:
+            painter.setPen(muted)
+            painter.drawText(left + 12, top + 28, "No completed slice data yet")
+            return
+
+        slot = plot_width / len(self._values)
+        bar_width = max(3, min(42, round(slot * 0.62)))
+        label_step = max(1, math.ceil(len(self._values) / max(1, plot_width // 34)))
+        for index, value in enumerate(self._values):
+            height = round(plot_height * max(0.0, value) / maximum)
+            x = round(left + index * slot + (slot - bar_width) / 2)
+            painter.fillRect(x, bottom - height, bar_width, height, accent)
+            if index % label_step == 0:
+                painter.setPen(muted)
+                label = self._labels[index] if index < len(self._labels) else str(index + 1)
+                painter.drawText(x, bottom + 18, label)
 
 
 class AxisCard(QFrame):
@@ -528,8 +586,7 @@ class MatrixStudioWindow(QMainWindow):
         self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.results_table.itemSelectionChanged.connect(self._result_selection_changed)
         split.addWidget(self.results_table)
-        self.chart_view = QChartView()
-        self.chart_view.setRenderHint(QPainter.Antialiasing)
+        self.chart_view = ResultsChart()
         split.addWidget(self.chart_view)
         split.setSizes([400, 340])
         layout.addWidget(split, 1)
@@ -780,7 +837,7 @@ class MatrixStudioWindow(QMainWindow):
 
     def _populate_results(self, bundle: RunBundle) -> None:
         self.results_table.setRowCount(len(bundle.variants))
-        time_set = QBarSet("Print time (min)")
+        chart_values: List[float] = []
         categories: List[str] = []
         for row, variant in enumerate(bundle.variants):
             stats = variant.stats or {}
@@ -796,24 +853,9 @@ class MatrixStudioWindow(QMainWindow):
             ]
             for column, value in enumerate(values):
                 self.results_table.setItem(row, column, QTableWidgetItem(value))
-            time_set.append(float(seconds or 0) / 60.0)
+            chart_values.append(float(seconds or 0) / 60.0)
             categories.append(str(variant.ordinal))
-        series = QBarSeries()
-        series.append(time_set)
-        chart = QChart()
-        chart.addSeries(series)
-        chart.setTitle("Print-time comparison")
-        chart.setAnimationOptions(QChart.SeriesAnimations)
-        axis_x = QBarCategoryAxis()
-        axis_x.append(categories)
-        axis_y = QValueAxis()
-        axis_y.setTitleText("Minutes")
-        chart.addAxis(axis_x, Qt.AlignBottom)
-        chart.addAxis(axis_y, Qt.AlignLeft)
-        series.attachAxis(axis_x)
-        series.attachAxis(axis_y)
-        chart.setTheme(QChart.ChartThemeDark if self.theme.currentText() == "dark" else QChart.ChartThemeLight)
-        self.chart_view.setChart(chart)
+        self.chart_view.set_values(chart_values, categories, self.theme.currentText() == "dark")
         completed = sum(1 for item in bundle.variants if item.state == "completed")
         self.result_banner.setText(f"{completed}/{len(bundle.variants)} variants completed · {bundle.state.replace('_', ' ').title()}")
 
