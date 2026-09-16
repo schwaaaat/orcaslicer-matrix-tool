@@ -15,12 +15,11 @@ The bundled native Compare View opens up to 32 stored variants in pages of eight
 - **Direct OrcaSlicer Integration**: Uses the custom branch's embedded local API; no MCP process is required. The same API remains compatible with `orcaslicer-mcp` when AI automation is wanted.
 - **Portable Run Library**: Atomic v2 run bundles remain usable when copied, while SQLite supplies fast local search and recent-run history.
 - **Intelligent Setting Key Resolution**: Resolves human-friendly names (e.g., `"layer height"`, `"wall count"`, `"infill density"`) and raw config keys (`layer_height`, `wall_loops`) against `print_settings_schema.json`. Unrecognized settings are cleanly rejected with close match suggestions.
-- **Baseline Wall-Clock Slice Timing & ETA Gate**: Slices the baseline variant first, measures true wall-clock slicing seconds with `time.monotonic()`, detects potential cache hits, calculates the estimated remaining and total time, and pauses for interactive approval before proceeding.
-- **Configurable Auto-Approval Threshold**: Automatically skips approval and proceeds seamlessly if total estimated slicing time is under a configurable threshold (default: 30s, configurable via `--auto-confirm-under <seconds>` or in the GUI). Can also be completely bypassed via non-interactive mode (`--yes` in CLI or unchecking "Require approval" in GUI).
-- **Guaranteed Config Snapshot & Safe Restoration**: Snapshots the baseline state of all targeted settings via `GET /api/v1/config`. Applies variants individually, resetting to baseline between slices to prevent permutation stacking, and guarantees exact restoration of the original plater configuration in a `try...finally` block under all circumstances (completion, variant error, or Ctrl+C).
+- **Baseline Wall-Clock Slice Timing & ETA Gate**: Slices the baseline variant first, measures real slicing time with `time.monotonic()`, estimates the remaining matrix, and pauses for approval before proceeding.
+- **Crash-Resilient Config Restoration**: Snapshots every targeted setting, resets to baseline between slices, restores the original values in a `finally` block, and records `recovery_required` in `run.json` if restoration cannot be completed.
 - **Cost Calculation**: Accurately extracts `filament_cost` ($/kg) from the active filament preset and calculates `cost_usd = filament_g * filament_cost / 1000.0`.
-- **Results & Analytics Dashboard**: Built-in interactive dashboard featuring Summary & Deltas comparison tables, G-code filament by line-type breakdown (inner/outer walls, infill, supports), visual bar/radar charts, and an automated recommendation banner.
-- **Selective Compare Viewer Integration**: Auto-detects or lets you browse to your `orca-slicer.exe` executable. Launch the full comparison or select a subset of variants (via Ctrl+Click in tables or the checklist dialog) to inspect 2, 3, or more specific variants side-by-side.
+- **Results & Analytics Dashboard**: A results table and print-time chart summarize completed variants, while the run bundle retains computed deltas and G-code filament-by-role data for reporting.
+- **Selective Compare Viewer Integration**: Auto-detects or lets you browse to `orca-slicer.exe`; select up to eight result rows to open directly in synchronized Compare View.
 
 ---
 

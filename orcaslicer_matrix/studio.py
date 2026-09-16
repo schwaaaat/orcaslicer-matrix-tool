@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import math
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -133,6 +134,17 @@ def _stored_api_token(base_url: str) -> Optional[str]:
         return keyring.get_password(KEYRING_SERVICE, base_url)
     except KeyringError:
         return None
+
+
+def _default_viewer_executable() -> str:
+    configured = os.environ.get("ORCA_SLICER_EXE")
+    if configured:
+        return configured
+    if getattr(sys, "frozen", False):
+        packaged = Path(sys.executable).resolve().parents[2] / "orca-slicer.exe"
+        if packaged.is_file():
+            return str(packaged)
+    return shutil.which("orca-slicer.exe") or "orca-slicer.exe"
 
 
 class ConnectionWorker(QObject):
@@ -535,6 +547,14 @@ class MatrixStudioWindow(QMainWindow):
         self.api_token_edit = QLineEdit(self.api_token or "")
         self.api_token_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_token_edit.setPlaceholderText("Auto-discovered for local OrcaSlicer")
+        self.viewer_executable_edit = QLineEdit(
+            str(self.settings.value("viewer_executable", _default_viewer_executable()))
+        )
+        viewer_browse = QPushButton("Browse…")
+        viewer_browse.clicked.connect(self._browse_viewer_executable)
+        viewer_row = QHBoxLayout()
+        viewer_row.addWidget(self.viewer_executable_edit, 1)
+        viewer_row.addWidget(viewer_browse)
         self.theme = QComboBox()
         self.theme.addItems(["dark", "light"])
         self.theme.setCurrentText(str(self.settings.value("theme", "dark")))
@@ -547,6 +567,7 @@ class MatrixStudioWindow(QMainWindow):
         root_row.addWidget(browse)
         form.addRow("OrcaSlicer API", self.api_url)
         form.addRow("API token", self.api_token_edit)
+        form.addRow("Compare Viewer", viewer_row)
         form.addRow("Theme", self.theme)
         form.addRow("Run library", root_row)
         save = QPushButton("Save settings")
@@ -805,7 +826,7 @@ class MatrixStudioWindow(QMainWindow):
             return
         rows = sorted({index.row() for index in self.results_table.selectedIndexes()})
         ids = [self.current_bundle.variants[row].id for row in rows[:8]]
-        executable = str(self.settings.value("viewer_executable", "orca-slicer.exe"))
+        executable = self.viewer_executable_edit.text().strip() or _default_viewer_executable()
         try:
             subprocess.Popen(
                 [executable, "--compare", str(self.current_run_dir / "run.json"), "--compare-variants", ",".join(ids)],
@@ -839,6 +860,16 @@ class MatrixStudioWindow(QMainWindow):
         if path:
             self.run_root_edit.setText(path)
 
+    def _browse_viewer_executable(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Choose OrcaSlicer executable",
+            self.viewer_executable_edit.text(),
+            "Applications (*.exe);;All files (*)",
+        )
+        if path:
+            self.viewer_executable_edit.setText(path)
+
     def _save_settings(self) -> None:
         previous_url = self.base_url
         self.base_url = self.api_url.text().strip().rstrip("/")
@@ -863,6 +894,7 @@ class MatrixStudioWindow(QMainWindow):
         self.runs_root = Path(self.run_root_edit.text()).expanduser()
         self.store = RunBundleStore(self.runs_root)
         self.settings.setValue("api_url", self.base_url)
+        self.settings.setValue("viewer_executable", self.viewer_executable_edit.text().strip())
         self.settings.setValue("runs_root", str(self.runs_root))
         self.settings.setValue("theme", self.theme.currentText())
         self.settings.setValue("soft_limit", self.soft_limit.value())
