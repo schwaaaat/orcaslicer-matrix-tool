@@ -1,4 +1,4 @@
-"""OrcaSlicer Matrix Tool: Standalone, token-free matrix slicer and compare manifest generator."""
+"""OrcaSlicer Matrix Studio."""
 
 from .catalog import DimensionCatalog, DimensionDefinition, PresetValue, get_default_catalog
 from .client import OrcaApiError, OrcaAuthError, OrcaClient, OrcaConnectionError, OrcaError
@@ -12,9 +12,10 @@ from .matrix import (
     parse_matrix_input,
 )
 from .runner import MatrixRunner
+from .run_bundle import AxisDefinition, RunBundle, RunBundleStore, RunLibrary, VariantRecord
 from .schema import SettingsSchema, UnknownSettingError, resolve_matrix_dict, resolve_setting
 
-__version__ = "1.1.0"
+__version__ = "2.0.0"
 __all__ = [
     "OrcaClient",
     "OrcaError",
@@ -37,4 +38,9 @@ __all__ = [
     "DimensionDefinition",
     "PresetValue",
     "get_default_catalog",
+    "AxisDefinition",
+    "VariantRecord",
+    "RunBundle",
+    "RunBundleStore",
+    "RunLibrary",
 ]

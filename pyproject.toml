@@ -4,10 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orcaslicer-matrix"
-version = "1.0.0"
-description = "Standalone, token-free matrix slicer and compare manifest generator for OrcaSlicer"
+version = "2.0.0"
+description = "Modern desktop matrix slicing and comparison studio for OrcaSlicer"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
+dependencies = [
+    "PySide6>=6.8,<7",
+    "httpx>=0.27,<1",
+    "keyring>=25,<26",
+]
 license = { text = "MIT" }
 authors = [
     { name = "OrcaSlicer Contributors" }
@@ -20,6 +25,14 @@ classifiers = [
 
 [project.scripts]
 orcaslicer-matrix = "orcaslicer_matrix.cli:main"
+orcaslicer-matrix-studio = "orcaslicer_matrix.studio:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8,<9",
+    "pytest-qt>=4.4,<5",
+    "pyinstaller>=6.10,<7",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]

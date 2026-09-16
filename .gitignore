@@ -5,6 +5,10 @@ __pycache__/
 dist/
 build/
 .eggs/
+.venv/
+.test-data/
+.qa-data/
+matrix-studio-*.png
 
 # Slicer matrix outputs
 compare_output/

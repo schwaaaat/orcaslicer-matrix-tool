@@ -1,16 +1,19 @@
-# OrcaSlicer Matrix Tool
+# OrcaSlicer Matrix Studio
 
-A standalone, token-free Python tool with both a modern **Desktop GUI** and **CLI** that slices a matrix of OrcaSlicer setting permutations against whatever model is loaded on the plater, saves each variant's raw G-code, and generates a `manifest.json` conforming to `COMPARE_MANIFEST_SCHEMA.md`.
+A Windows-first PySide6 desktop workspace for designing, slicing, and analyzing OrcaSlicer setting matrices. Matrix Studio connects directly to the token-authenticated Remote API built into the companion OrcaSlicer branch, slices the active plate, preserves the original settings, and stores every experiment as a portable v2 run bundle.
 
-The generated manifest and G-code files are directly consumed by the native 3D multi-pane compare viewer (`orca-slicer.exe --compare manifest.json`).
+The bundled native Compare View opens up to 32 stored variants in pages of eight synchronized G-code previews (`orca-slicer.exe --compare run.json`).
+
+> Matrix Studio v2 is a clean-break desktop release. The legacy CLI and v1 manifest writer remain temporarily available for scripted compatibility, but new desktop runs use `run.json` schema version 2 and the local run library.
 
 ## Key Features
 
-- **Interactive Desktop GUI (`--gui`)**: Modern, native Tkinter/TTK graphical interface. Configure up to 3 dimensions, filter settings by OrcaSlicer Process tabs, click quick-add preset chips, inspect real-time permutation counts, preview variants table, monitor slice progress, and auto-launch the compare viewer.
+- **Modern Qt Desktop UI**: Dark technical-studio design with Build, Active Run, Analyze, Settings, and searchable run-history workspaces.
 - **Comprehensive Process Tab Coverage**: Directly mirrors OrcaSlicer's Process tabs (**Quality**, **Strength**, **Speed**, **Support**, **Others**, **Advanced**, plus **Extrusion & Flow** and **Filament & Cooling**), providing rich presets for common tests and searchable access to all 800+ settings from `print_settings_schema.json`.
 - **Max 3 Dimensions Cap**: Restricts simultaneous matrix dimensions to at most 3 (e.g. Axis A, Axis B, Axis C) to prevent combinatorial explosion and keep comparisons meaningful and manageable.
-- **Strict 8-Variant Hard Cap**: Enforces the maximum 8-variant limit specified in `COMPARE_MANIFEST_SCHEMA.md`. If a matrix produces >8 permutations, execution is refused with clear guidance detailing which axis to trim or drop.
-- **Zero LLM / Runtime Dependencies**: Pure Python standard library (`urllib.request`, `json`, `argparse`, `tkinter`). Talks directly to OrcaSlicer's embedded REST API. No API keys, no Claude tokens, no third-party pip dependencies required.
+- **Configurable Matrix Safety**: A warning threshold defaults to 8 variants, with a hard first-release limit of 32. Compare View keeps no more than eight G-code datasets resident at once.
+- **Direct OrcaSlicer Integration**: Uses the custom branch's embedded local API; no MCP process is required. The same API remains compatible with `orcaslicer-mcp` when AI automation is wanted.
+- **Portable Run Library**: Atomic v2 run bundles remain usable when copied, while SQLite supplies fast local search and recent-run history.
 - **Intelligent Setting Key Resolution**: Resolves human-friendly names (e.g., `"layer height"`, `"wall count"`, `"infill density"`) and raw config keys (`layer_height`, `wall_loops`) against `print_settings_schema.json`. Unrecognized settings are cleanly rejected with close match suggestions.
 - **Baseline Wall-Clock Slice Timing & ETA Gate**: Slices the baseline variant first, measures true wall-clock slicing seconds with `time.monotonic()`, detects potential cache hits, calculates the estimated remaining and total time, and pauses for interactive approval before proceeding.
 - **Configurable Auto-Approval Threshold**: Automatically skips approval and proceeds seamlessly if total estimated slicing time is under a configurable threshold (default: 30s, configurable via `--auto-confirm-under <seconds>` or in the GUI). Can also be completely bypassed via non-interactive mode (`--yes` in CLI or unchecking "Require approval" in GUI).
@@ -21,26 +24,28 @@ The generated manifest and G-code files are directly consumed by the native 3D m
 
 ---
 
-## Quick Start: Launch GUI
+## Quick Start
 
-Run without arguments (or with `--gui`) to launch the desktop interface:
+Create an environment and install the desktop dependencies:
 ```bash
-python matrix_tool.py
-# or
-python matrix_tool.py --gui
+python -m venv .venv
+.venv\Scripts\python -m pip install -e ".[dev]"
+.venv\Scripts\python matrix_tool.py
 ```
 
-In the GUI:
-1. View live connection to OrcaSlicer and active plater details (printer, print preset, filament, model on bed).
-2. Add up to 3 dimensions (Axis A, Axis B, Axis C).
-3. Select any OrcaSlicer Process Tab (**Quality**, **Strength**, **Speed**, **Support**, **Others**, **Advanced**, **Extrusion**, **Filament**) or search all 800+ settings.
-4. Click preset value chips or type custom values.
-5. Watch the live permutation calculator enforce the 8-variant limit and preview the permutations table.
-6. Click **Run Matrix Slices** to slice and optionally open the compare viewer!
+Enable **Remote API** in the custom OrcaSlicer build, load a model on the plate, and launch Matrix Studio from OrcaSlicer's menu or directly. Build a 1–3 axis matrix, review its variants, and start the run. The baseline slice supplies the remaining-time estimate before the tool continues.
+
+For development packaging:
+
+```powershell
+./packaging/build_windows.ps1
+```
+
+The onedir result is written below `packaging/dist/OrcaMatrixStudio` and is intended to be installed beside OrcaSlicer under `tools/OrcaMatrix`.
 
 ---
 
-## Usage Examples
+## Legacy CLI Compatibility
 
 ### 1. Slicing with CLI Axis Flags
 Slice a 2x2 matrix (4 variants) using canonical config keys:
@@ -97,9 +102,9 @@ API token resolution order:
 
 ---
 
-## Output Manifest Structure
+## Legacy v1 Manifest Structure
 
-The tool outputs a `manifest.json` file in `<output_dir>` alongside the `.gcode` files:
+Legacy CLI runs output a `manifest.json` file in `<output_dir>` alongside the `.gcode` files. New Matrix Studio runs write the v2 `run.json` bundle documented in `RUN_BUNDLE_SCHEMA.md`.
 
 ```json
 {
@@ -139,14 +144,17 @@ The tool outputs a `manifest.json` file in `<output_dir>` alongside the `.gcode`
 
 ## Running the Automated Test Suite
 
-The test suite requires zero external dependencies and runs with Python's built-in `unittest`:
+Install the development dependencies and run the complete suite with pytest:
 
 ```bash
-python -m unittest discover -s tests -p "test_*.py"
+python -m pytest -q
 ```
 
 Covers:
 - `test_schema.py`: Setting resolution, human labels, synonyms, typo suggestions.
-- `test_matrix.py`: Cartesian product, slugification, 8-variant limit enforcement and suggestions.
+- `test_matrix.py`: Cartesian product, slugification, configurable limit enforcement and suggestions.
+- `test_run_bundle.py`: v2 schema round trips, atomic writes, and run-library indexing.
+- `test_studio_client.py`: capabilities negotiation and compatibility rejection.
+- `test_studio_gui.py`: Qt builder layout, axis limits, and live permutation preview.
 - `test_client.py`: Stdlib REST client against mock HTTP server, client-side filtering, 422 retry.
 - `test_runner.py`: End-to-end orchestration, snapshot restoration, wall-clock ETA gate, cost calculation, and schema conformance.

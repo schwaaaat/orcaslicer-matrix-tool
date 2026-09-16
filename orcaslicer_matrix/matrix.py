@@ -1,4 +1,4 @@
-"""Matrix permutation generation, variant naming, validation, and 8-variant limit enforcement.
+"""Matrix permutation generation, variant naming, and configurable limit enforcement.
 
 Enforces the hard cap of 8 total variants required by COMPARE_MANIFEST_SCHEMA.md.
 Provides actionable suggestions if the limit is exceeded.
@@ -38,7 +38,7 @@ class DimensionLimitExceededError(ValueError):
 
 
 class VariantLimitExceededError(ValueError):
-    """Raised when the Cartesian product exceeds the 8-variant hard cap."""
+    """Raised when the Cartesian product exceeds the configured hard cap."""
 
     def __init__(self, count: int, axes: Dict[str, List[str]], max_limit: int = MAX_VARIANTS):
         self.count = count
@@ -47,7 +47,7 @@ class VariantLimitExceededError(ValueError):
 
         lines = [
             f"Matrix permutation produces {count} variants, which exceeds the hard cap of {max_limit} variants.",
-            "The compare viewer supports a maximum of 8 variants to bound GPU resources and UI grid layout.",
+            f"This run is configured for at most {max_limit} variants to bound slicing and storage resources.",
             "",
             "Current axes configuration:",
         ]
