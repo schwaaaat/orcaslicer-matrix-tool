@@ -5,13 +5,16 @@ import unittest
 from orcaslicer_matrix.catalog import (
     CAT_ADVANCED,
     CAT_ALL,
+    CAT_COMMON,
     CAT_EXTRUSION,
+    CAT_FAVORITES,
     CAT_FILAMENT,
     CAT_OTHERS,
     CAT_QUALITY,
     CAT_SPEED,
     CAT_STRENGTH,
     CAT_SUPPORT,
+    CURATED_OVERRIDES,
     DimensionCatalog,
     DimensionDefinition,
     PresetValue,
@@ -50,6 +53,8 @@ class TestCatalog(unittest.TestCase):
 
     def test_process_categories(self):
         cats = self.catalog.get_categories()
+        self.assertIn(CAT_COMMON, cats)
+        self.assertIn(CAT_FAVORITES, cats)
         self.assertIn(CAT_QUALITY, cats)
         self.assertIn(CAT_STRENGTH, cats)
         self.assertIn(CAT_SPEED, cats)
@@ -59,6 +64,28 @@ class TestCatalog(unittest.TestCase):
         self.assertIn(CAT_EXTRUSION, cats)
         self.assertIn(CAT_FILAMENT, cats)
         self.assertIn(CAT_ALL, cats)
+
+    def test_common_settings_category(self):
+        common_dims = self.catalog.get_dimensions_for_category(CAT_COMMON)
+        self.assertEqual(len(common_dims), len(CURATED_OVERRIDES))
+        self.assertTrue(any(d.key == "layer_height" for d in common_dims))
+        self.assertTrue(any(d.key == "wall_loops" for d in common_dims))
+
+    def test_favorites_category_dynamic(self):
+        # Empty favorites returns empty list
+        empty_favs = self.catalog.get_dimensions_for_category(CAT_FAVORITES)
+        self.assertEqual(empty_favs, [])
+
+        # Non-empty favorites resolves definitions and sorts by label
+        fav_dims = self.catalog.get_dimensions_for_category(
+            CAT_FAVORITES,
+            favorite_keys=["wall_loops", "layer_height", "non_existent_key"]
+        )
+        self.assertEqual(len(fav_dims), 2)
+        fav_keys = [d.key for d in fav_dims]
+        self.assertIn("layer_height", fav_keys)
+        self.assertIn("wall_loops", fav_keys)
+        self.assertEqual(fav_dims, sorted(fav_dims, key=lambda d: d.label.lower()))
 
     def test_dimensions_by_process_category(self):
         quality_dims = self.catalog.get_dimensions_for_category(CAT_QUALITY)

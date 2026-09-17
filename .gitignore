@@ -8,6 +8,7 @@ build/
 .venv/
 .test-data/
 .qa-data/
+.pytest_tmp/
 matrix-studio-*.png
 
 # Slicer matrix outputs

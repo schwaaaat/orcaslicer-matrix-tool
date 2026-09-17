@@ -224,3 +224,12 @@ class RunLibrary:
         with closing(self._connect()) as db:
             db.row_factory = sqlite3.Row
             return [dict(row) for row in db.execute(query, params)]
+
+    def delete_run(self, run_id: Optional[str] = None, path: Optional[str] = None) -> None:
+        """Remove a run entry from the library database by its run_id or path."""
+        with closing(self._connect()) as db:
+            if run_id:
+                db.execute("DELETE FROM runs WHERE run_id = ?", (run_id,))
+            elif path:
+                db.execute("DELETE FROM runs WHERE path = ?", (str(Path(path).resolve()),))
+            db.commit()

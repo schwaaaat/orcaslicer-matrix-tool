@@ -55,6 +55,8 @@ class DimensionDefinition:
 
 
 # Standard Process Tab Category Names
+CAT_COMMON = "Common Settings"
+CAT_FAVORITES = "★ Favorites"
 CAT_QUALITY = "Process: Quality"
 CAT_STRENGTH = "Process: Strength"
 CAT_SPEED = "Process: Speed"
@@ -66,6 +68,8 @@ CAT_FILAMENT = "Filament & Cooling"
 CAT_ALL = "All Settings (800+)"
 
 PROCESS_CATEGORIES = [
+    CAT_COMMON,
+    CAT_FAVORITES,
     CAT_QUALITY,
     CAT_STRENGTH,
     CAT_SPEED,
@@ -594,6 +598,11 @@ class DimensionCatalog:
                 self._dimensions_by_category[category].append(dim)
             self._dimensions_by_category[CAT_ALL].append(dim)
 
+        # Populate Common Settings from curated overrides
+        for k in CURATED_OVERRIDES:
+            if k in self._dimensions_by_key:
+                self._dimensions_by_category[CAT_COMMON].append(self._dimensions_by_key[k])
+
         # Sort dimensions in each category alphabetically by human label
         for cat in self._dimensions_by_category:
             self._dimensions_by_category[cat].sort(key=lambda d: d.label.lower())
@@ -602,8 +611,18 @@ class DimensionCatalog:
         """Return the available categories corresponding to Process tabs."""
         return list(PROCESS_CATEGORIES)
 
-    def get_dimensions_for_category(self, category: str) -> List[DimensionDefinition]:
-        """Return dimensions belonging to a specific Process category."""
+    def get_dimensions_for_category(
+        self,
+        category: str,
+        favorite_keys: Optional[List[str]] = None,
+    ) -> List[DimensionDefinition]:
+        """Return dimensions belonging to a specific Process category or Favorites."""
+        if category == CAT_FAVORITES:
+            if not favorite_keys:
+                return []
+            result = [self._dimensions_by_key[k] for k in favorite_keys if k in self._dimensions_by_key]
+            result.sort(key=lambda d: d.label.lower())
+            return result
         return list(self._dimensions_by_category.get(category, self._dimensions_by_category[CAT_ALL]))
 
     def get_all_available_dimensions(self) -> List[DimensionDefinition]:

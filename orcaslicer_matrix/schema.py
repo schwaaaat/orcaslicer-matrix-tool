@@ -11,6 +11,7 @@ import difflib
 import json
 import os
 from pathlib import Path
+import sys
 from typing import Any, Dict, List, Optional
 
 
@@ -98,16 +99,50 @@ class SettingsSchema:
                 return p
             raise FileNotFoundError(f"Schema file not found at: {explicit_path}")
 
-        # Search candidates: adjacent to this file, current directory, parent directories
+        candidates: List[Path] = []
+
+        # 1. Package directory (adjacent to this file) and its parent
         here = Path(__file__).resolve().parent
-        candidates = [
-            here / "print_settings_schema.json",
-            here.parent / "print_settings_schema.json",
-            Path.cwd() / "print_settings_schema.json",
-        ]
+        candidates.append(here / "print_settings_schema.json")
+        candidates.append(here.parent / "print_settings_schema.json")
+
+        # 2. PyInstaller MEIPASS if running bundled
+        meipass = getattr(sys, "_MEIPASS", None)
+        if meipass:
+            m_path = Path(meipass)
+            candidates.append(m_path / "print_settings_schema.json")
+            candidates.append(m_path / "orcaslicer_matrix" / "print_settings_schema.json")
+
+        # 3. Executable directory (for frozen or runner-launched binaries)
+        try:
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.append(exe_dir / "print_settings_schema.json")
+            candidates.append(exe_dir / "_internal" / "print_settings_schema.json")
+            candidates.append(exe_dir / "_internal" / "orcaslicer_matrix" / "print_settings_schema.json")
+            candidates.append(exe_dir.parent / "print_settings_schema.json")
+        except Exception:
+            pass
+
+        # 4. importlib.resources fallback
+        try:
+            import importlib.resources as pkg_resources
+            ref = pkg_resources.files("orcaslicer_matrix").joinpath("print_settings_schema.json")
+            if hasattr(ref, "is_file") and ref.is_file():
+                candidates.append(Path(str(ref)))
+        except Exception:
+            pass
+
+        # 5. Current working directory and parent
+        cwd = Path.cwd()
+        candidates.append(cwd / "print_settings_schema.json")
+        candidates.append(cwd.parent / "print_settings_schema.json")
+
         for c in candidates:
-            if c.is_file():
-                return c
+            try:
+                if c.is_file():
+                    return c.resolve()
+            except OSError:
+                continue
 
         raise FileNotFoundError(
             "Could not locate 'print_settings_schema.json'. "

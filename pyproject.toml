@@ -40,3 +40,7 @@ include = ["orcaslicer_matrix*"]
 
 [tool.setuptools.package-data]
 "*" = ["print_settings_schema.json"]
+
+[tool.pytest.ini_options]
+addopts = "--basetemp=.pytest_tmp"
+

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
+import json
 import math
 import os
 import shutil
@@ -12,12 +14,12 @@ import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 from urllib.parse import urlsplit
 
 import keyring
 from keyring.errors import KeyringError, PasswordDeleteError
-from PySide6.QtCore import QObject, QSettings, Qt, QThread, Signal, Slot
+from PySide6.QtCore import QObject, QPoint, QSettings, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -35,6 +37,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -42,6 +45,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QStackedWidget,
+    QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
@@ -49,7 +53,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .catalog import DimensionDefinition, get_default_catalog
+from .catalog import (
+    CAT_ALL,
+    CAT_COMMON,
+    CAT_FAVORITES,
+    DimensionCatalog,
+    DimensionDefinition,
+    PresetValue,
+    get_default_catalog,
+)
 from .matrix import VariantLimitExceededError, build_variants
 from .run_bundle import (
     AxisDefinition,
@@ -78,6 +90,9 @@ QPushButton:hover, QToolButton:hover { background: #252d36; border-color: #4a586
 QPushButton:pressed { background: #151a1f; }
 QPushButton#primary { background: #0f806f; border-color: #23a991; color: white; font-weight: 650; }
 QPushButton#primary:hover { background: #149580; }
+QPushButton#chip { background: #1c2229; border: 1px solid #343d47; border-radius: 12px; padding: 2px 9px; font-size: 8.5pt; color: #aeb8c2; }
+QPushButton#chip:hover { background: #252d36; border-color: #4a5866; color: #dce3ea; }
+QPushButton#chip:checked { background: #183d33; border-color: #2eb896; color: #43d3a2; font-weight: 600; }
 QPushButton#nav { text-align: left; border: 0; background: transparent; padding: 10px 12px; color: #aab4be; }
 QPushButton#nav:checked { background: #172721; color: #63ddba; border-left: 3px solid #37caa4; }
 QLineEdit, QComboBox, QSpinBox { background: #0f1317; border: 1px solid #323a43; border-radius: 6px; padding: 7px; selection-background-color: #167f6e; }
@@ -88,6 +103,10 @@ QProgressBar { background: #0e1216; border: 1px solid #303842; border-radius: 6p
 QProgressBar::chunk { background: #24ae93; border-radius: 5px; }
 QScrollArea { border: 0; }
 QSplitter::handle { background: #242b32; width: 1px; }
+QTabWidget::pane { border: 1px solid #2a3139; background: #111418; border-radius: 8px; }
+QTabBar::tab { background: #171b20; color: #85919d; border: 1px solid #2a3139; border-bottom: 0; padding: 7px 16px; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 4px; font-weight: 600; }
+QTabBar::tab:selected { background: #1a2420; color: #43d3a2; border-bottom: 2px solid #37caa4; }
+QTabBar::tab:hover:!selected { background: #222932; color: #dce3ea; }
 """
 
 KEYRING_SERVICE = "OrcaSlicer Matrix Studio Remote API"
@@ -103,12 +122,19 @@ QLabel#good { color: #087963; font-weight: 600; }
 QLabel#warning { color: #9b6107; font-weight: 600; }
 QPushButton, QToolButton { background: #fff; border: 1px solid #bcc7d0; border-radius: 7px; padding: 8px 12px; }
 QPushButton#primary { background: #087d6b; color: white; font-weight: 650; }
+QPushButton#chip { background: #f0f3f6; border: 1px solid #d0d7de; border-radius: 12px; padding: 2px 9px; font-size: 8.5pt; color: #475569; }
+QPushButton#chip:hover { background: #e2e8f0; border-color: #cbd5e1; color: #1e293b; }
+QPushButton#chip:checked { background: #d9eee8; border-color: #0a8c76; color: #087963; font-weight: 600; }
 QPushButton#nav { text-align: left; border: 0; background: transparent; padding: 10px 12px; }
 QPushButton#nav:checked { background: #d9eee8; color: #096e5e; border-left: 3px solid #0a8c76; }
 QLineEdit, QComboBox, QSpinBox { background: white; border: 1px solid #bac5ce; border-radius: 6px; padding: 7px; }
 QTableWidget, QListWidget { background: white; alternate-background-color: #f1f4f6; border: 1px solid #ccd4db; border-radius: 7px; }
 QHeaderView::section { background: #e8edf1; border: 0; border-bottom: 1px solid #c4cdd5; padding: 8px; }
 QProgressBar::chunk { background: #15977f; }
+QTabWidget::pane { border: 1px solid #ccd4db; background: white; border-radius: 8px; }
+QTabBar::tab { background: #e8edf1; color: #66737e; border: 1px solid #ccd4db; border-bottom: 0; padding: 7px 16px; border-top-left-radius: 6px; border-top-right-radius: 6px; margin-right: 4px; font-weight: 600; }
+QTabBar::tab:selected { background: white; color: #087d6b; border-bottom: 2px solid #0a8c76; }
+QTabBar::tab:hover:!selected { background: #f0f3f6; color: #1d2730; }
 """
 
 
@@ -144,6 +170,134 @@ def _default_viewer_executable() -> str:
         if packaged.is_file():
             return str(packaged)
     return shutil.which("orca-slicer.exe") or "orca-slicer.exe"
+
+
+FAVORITE_SETTINGS_KEY = "favorite_settings"
+
+
+def get_favorite_settings() -> List[str]:
+    """Retrieve saved favorite setting keys from QSettings."""
+    settings = QSettings("OrcaMatrix", "Studio")
+    val = settings.value(FAVORITE_SETTINGS_KEY, [])
+    if val is None:
+        return []
+    if isinstance(val, str):
+        try:
+            parsed = json.loads(val)
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed if item]
+        except Exception:
+            return [s.strip() for s in val.split(",") if s.strip()]
+    elif isinstance(val, (list, tuple)):
+        return [str(v) for v in val if v]
+    return []
+
+
+def set_favorite_settings(keys: List[str]) -> None:
+    """Persist favorite setting keys to QSettings."""
+    settings = QSettings("OrcaMatrix", "Studio")
+    unique_keys = sorted(list({k.strip() for k in keys if k and k.strip()}))
+    settings.setValue(FAVORITE_SETTINGS_KEY, json.dumps(unique_keys))
+
+
+def is_favorite_setting(key: str) -> bool:
+    """Return True if the given setting key is in saved favorites."""
+    if not key:
+        return False
+    return key in set(get_favorite_settings())
+
+
+def toggle_favorite_setting(key: str) -> bool:
+    """Toggle a setting key in saved favorites. Returns True if now favorite, False if removed."""
+    if not key:
+        return False
+    favs = set(get_favorite_settings())
+    if key in favs:
+        favs.remove(key)
+        is_fav = False
+    else:
+        favs.add(key)
+        is_fav = True
+    set_favorite_settings(list(favs))
+    return is_fav
+
+
+class SortableTableWidgetItem(QTableWidgetItem):
+    """QTableWidgetItem supporting custom typed sort keys for numeric and state sorting."""
+
+    def __init__(self, text: str, sort_key: Any, user_data: Any = None):
+        super().__init__(text)
+        self.sort_key = sort_key
+        if user_data is not None:
+            self.setData(Qt.UserRole, user_data)
+
+    def __lt__(self, other: Any) -> bool:
+        if isinstance(other, SortableTableWidgetItem):
+            a = self.sort_key
+            b = other.sort_key
+            if a is None and b is None:
+                return False
+            if a is None:
+                return False
+            if b is None:
+                return True
+            try:
+                return a < b
+            except TypeError:
+                return str(a) < str(b)
+        return super().__lt__(other)
+
+
+def generate_bundle_html_report(bundle: RunBundle, run_dir: Path) -> Path:
+    """Generate a rich self-contained HTML report with Pareto and line-type SVG charts."""
+    from .analytics import compute_matrix_comparison, generate_html_report
+
+    run_path = Path(run_dir)
+    html_path = run_path / "report.html"
+
+    presets = bundle.source.get("presets", {}) if isinstance(bundle.source, dict) else {}
+    source_dict = dict(bundle.source) if isinstance(bundle.source, dict) else {}
+    if "printer" in presets and "printer_preset" not in source_dict:
+        source_dict["printer_preset"] = presets["printer"]
+    if "print" in presets and "print_preset" not in source_dict:
+        source_dict["print_preset"] = presets["print"]
+    if "filament" in presets and "filament_preset" not in source_dict:
+        source_dict["filament_preset"] = presets["filament"]
+
+    matrix_dict = {axis.key: list(axis.values) for axis in bundle.axes}
+
+    variant_dicts = [
+        {
+            "name": v.name,
+            "changes": v.changes,
+            "gcode_path": v.gcode_path,
+            "stats": v.stats,
+            "warnings": v.warnings,
+            "error": v.error,
+        }
+        for v in bundle.variants
+    ]
+
+    comparison = bundle.comparison
+    if not comparison or not comparison.get("summary_rows"):
+        completed = [v for v in variant_dicts if v.get("stats") and v["stats"].get("time_s") is not None]
+        if completed:
+            comparison = compute_matrix_comparison(completed, completed[0]["name"])
+        elif variant_dicts:
+            comparison = compute_matrix_comparison(variant_dicts, variant_dicts[0]["name"])
+        else:
+            comparison = {}
+
+    manifest_data = {
+        "schema_version": 2,
+        "source": source_dict,
+        "baseline": bundle.variants[0].name if bundle.variants else None,
+        "matrix": matrix_dict,
+        "variants": variant_dicts,
+        "comparison": comparison,
+    }
+
+    return generate_html_report(manifest_data, comparison, html_path)
 
 
 class ConnectionWorker(QObject):
@@ -291,52 +445,367 @@ class ResultsChart(QWidget):
 
 class AxisCard(QFrame):
     changed = Signal()
+    favorites_changed = Signal()
     remove_requested = Signal(object)
 
-    def __init__(self, definitions: List[DimensionDefinition], index: int, parent: Optional[QWidget] = None):
+    def __init__(
+        self,
+        definitions: Optional[List[DimensionDefinition]] = None,
+        index: int = 0,
+        parent: Optional[QWidget] = None,
+        catalog: Optional[DimensionCatalog] = None,
+    ):
         super().__init__(parent)
         self.setObjectName("card")
-        self.definitions = definitions
+        self.catalog = catalog or get_default_catalog()
+        self.definitions = definitions or self.catalog.get_all_available_dimensions()
+        self.categories = self.catalog.get_categories()
+        self._category_dims: List[DimensionDefinition] = []
+        self._current_key: Optional[str] = None
+        self._preset_chips: List[QPushButton] = []
+
+        # Header: Axis label, category badge, and Remove button
+        header = QHBoxLayout()
         self.index_label = QLabel(f"AXIS {chr(65 + index)}")
         self.index_label.setObjectName("muted")
+        header.addWidget(self.index_label)
+
+        self.category_badge = QLabel()
+        self.category_badge.setObjectName("muted")
+        header.addWidget(self.category_badge)
+        header.addStretch()
+
+        self.remove = QToolButton()
+        self.remove.setText("Remove")
+        header.addWidget(self.remove)
+
+        # Category (Process Tab) and Keyword Filter Row
+        cat_filter_row = QHBoxLayout()
+        cat_filter_row.setSpacing(8)
+
+        cat_label = QLabel("Tab:")
+        cat_label.setStyleSheet("font-weight: 600; font-size: 9pt;")
+        cat_filter_row.addWidget(cat_label)
+
+        self.category_combo = QComboBox()
+        self.category_combo.addItems(self.categories)
+        self.category_combo.setMinimumWidth(180)
+        cat_filter_row.addWidget(self.category_combo)
+
+        filter_label = QLabel("Filter:")
+        filter_label.setStyleSheet("font-weight: 600; font-size: 9pt;")
+        cat_filter_row.addWidget(filter_label)
+
+        self.filter_entry = QLineEdit()
+        self.filter_entry.setPlaceholderText("Filter settings by keyword...")
+        self.filter_entry.setClearButtonEnabled(True)
+        cat_filter_row.addWidget(self.filter_entry, 1)
+
+        # Setting Selector Row
+        setting_row = QHBoxLayout()
+        setting_label = QLabel("Setting:")
+        setting_label.setStyleSheet("font-weight: 600; font-size: 9pt;")
+        setting_row.addWidget(setting_label)
+
         self.setting = QComboBox()
         self.setting.setEditable(True)
         self.setting.setInsertPolicy(QComboBox.NoInsert)
         self.setting.completer().setFilterMode(Qt.MatchContains)
         self.setting.completer().setCaseSensitivity(Qt.CaseInsensitive)
-        for definition in definitions:
-            self.setting.addItem(definition.full_display_name, definition.key)
+        setting_row.addWidget(self.setting, 1)
+
+        self.fav_button = QToolButton()
+        self.fav_button.setCursor(Qt.PointingHandCursor)
+        self.fav_button.clicked.connect(self._toggle_favorite_clicked)
+        setting_row.addWidget(self.fav_button)
+
+        # Metadata & Tooltip Box
+        self.meta_box = QFrame()
+        self.meta_box.setStyleSheet("background: transparent; border: 0; padding: 0;")
+        meta_layout = QVBoxLayout(self.meta_box)
+        meta_layout.setContentsMargins(0, 2, 0, 2)
+        meta_layout.setSpacing(2)
+
+        self.meta_label = QLabel()
+        self.meta_label.setObjectName("muted")
+        self.meta_label.setStyleSheet("font-size: 8.5pt;")
+        meta_layout.addWidget(self.meta_label)
+
+        self.desc_label = QLabel()
+        self.desc_label.setObjectName("muted")
+        self.desc_label.setWordWrap(True)
+        self.desc_label.setStyleSheet("font-size: 8.5pt;")
+        meta_layout.addWidget(self.desc_label)
+
+        # Presets Area
+        self.presets_header = QLabel("Quick-Add Presets (click to toggle):")
+        self.presets_header.setStyleSheet("font-size: 8.5pt; font-weight: 600;")
+        self.presets_header.setObjectName("muted")
+
+        self.chips_scroll = QScrollArea()
+        self.chips_scroll.setWidgetResizable(True)
+        self.chips_scroll.setFixedHeight(36)
+        self.chips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.chips_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.chips_scroll.setStyleSheet("background: transparent; border: 0;")
+
+        self.chips_container = QWidget()
+        self.chips_layout = QHBoxLayout(self.chips_container)
+        self.chips_layout.setContentsMargins(0, 0, 0, 0)
+        self.chips_layout.setSpacing(6)
+        self.chips_layout.addStretch()
+        self.chips_scroll.setWidget(self.chips_container)
+
+        # Values Row
+        values_row = QHBoxLayout()
+        val_label = QLabel("Values:")
+        val_label.setStyleSheet("font-weight: 600; font-size: 9pt;")
+        values_row.addWidget(val_label)
+
         self.values = QLineEdit()
         self.values.setPlaceholderText("Values separated by commas, e.g. 0.16, 0.20, 0.24")
-        self.remove = QToolButton()
-        self.remove.setText("Remove")
+        values_row.addWidget(self.values, 1)
 
-        header = QHBoxLayout()
-        header.addWidget(self.index_label)
-        header.addStretch()
-        header.addWidget(self.remove)
+        # Master Card Layout
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(8)
         layout.addLayout(header)
-        layout.addWidget(self.setting)
-        layout.addWidget(self.values)
+        layout.addLayout(cat_filter_row)
+        layout.addLayout(setting_row)
+        layout.addWidget(self.meta_box)
+        layout.addWidget(self.presets_header)
+        layout.addWidget(self.chips_scroll)
+        layout.addLayout(values_row)
 
+        # Connect Signals
+        self.category_combo.currentIndexChanged.connect(self._on_category_changed)
+        self.filter_entry.textChanged.connect(self._on_filter_changed)
         self.setting.currentIndexChanged.connect(self._setting_changed)
-        self.values.textChanged.connect(self.changed)
+        self.values.textChanged.connect(self._on_values_text_changed)
         self.remove.clicked.connect(lambda: self.remove_requested.emit(self))
+
+        # Initial populate
+        self._populate_settings()
+        self._setting_changed()
+
+    def _on_category_changed(self) -> None:
+        self.filter_entry.blockSignals(True)
+        self.filter_entry.clear()
+        self.filter_entry.blockSignals(False)
+        self._populate_settings()
+
+    def _on_filter_changed(self) -> None:
+        self._populate_settings()
+
+    def _populate_settings(self, preserve_key: Optional[str] = None) -> None:
+        cat = self.category_combo.currentText()
+        if cat == CAT_ALL or "All Settings" in cat:
+            dims = self.catalog.get_all_available_dimensions()
+        elif cat == CAT_FAVORITES:
+            dims = self.catalog.get_dimensions_for_category(cat, favorite_keys=get_favorite_settings())
+        else:
+            dims = self.catalog.get_dimensions_for_category(cat)
+
+        q = self.filter_entry.text().strip().lower()
+        if q:
+            dims = [
+                d for d in dims
+                if q in d.key.lower() or q in d.label.lower() or (d.tooltip and q in d.tooltip.lower())
+            ]
+
+        self._category_dims = dims
+        target_key = preserve_key or self.setting.currentData() or (dims[0].key if dims else None)
+
+        self.setting.blockSignals(True)
+        self.setting.clear()
+        selected_idx = -1
+        if not dims and cat == CAT_FAVORITES:
+            self.setting.addItem("(No favorite settings saved yet)", "")
+        else:
+            for idx, d in enumerate(dims):
+                self.setting.addItem(d.full_display_name, d.key)
+                if d.key == target_key:
+                    selected_idx = idx
+
+        if selected_idx >= 0:
+            self.setting.setCurrentIndex(selected_idx)
+        elif dims:
+            self.setting.setCurrentIndex(0)
+        elif cat == CAT_FAVORITES:
+            self.setting.setCurrentIndex(0)
+        self.setting.blockSignals(False)
         self._setting_changed()
 
     def _setting_changed(self) -> None:
-        definition = self.definition()
-        if definition and not self.values.text().strip() and definition.presets:
-            self.values.setText(", ".join(item.value for item in definition.presets[:4]))
-        if definition:
-            self.setToolTip(definition.tooltip)
+        key = self.setting.currentData()
+        definition = self.catalog.get_dimension(key) if key else None
+        self._update_favorite_button()
+        if not definition:
+            if self.category_combo.currentText() == CAT_FAVORITES:
+                self.meta_label.setText("No favorite settings saved yet")
+                self.desc_label.setText(
+                    "To save a favorite setting, browse any category (like Common Settings or Process tabs) "
+                    "and click the star (☆) button next to the setting name."
+                )
+            else:
+                self.meta_label.setText("")
+                self.desc_label.setText("")
+            self.category_badge.setText("")
+            self.presets_header.hide()
+            self.chips_scroll.hide()
+            self.changed.emit()
+            return
+
+        parts = [f"Key: {definition.key}", f"Type: {definition.type}"]
+        if definition.unit:
+            parts.append(f"Unit: {definition.unit}")
+        if definition.default_val is not None:
+            parts.append(f"Default: {definition.default_val}")
+        self.meta_label.setText("  ·  ".join(parts))
+        self.desc_label.setText(definition.tooltip.strip() if definition.tooltip else "(No description in schema)")
+        self.category_badge.setText(f"[{definition.category}]")
+        self.setToolTip(definition.tooltip or "")
+
+        # Auto-populate suggested presets when changing to a different setting!
+        if definition.key != self._current_key:
+            self._current_key = definition.key
+            if definition.presets:
+                suggested = [p.value for p in definition.presets[:2]]
+                self.values.setText(", ".join(suggested))
+            else:
+                self.values.clear()
+
+        self._rebuild_preset_chips(definition.presets)
+        self._sync_chips_with_values()
         self.changed.emit()
+
+    def _toggle_favorite_clicked(self) -> None:
+        key = self.setting.currentData()
+        if not key:
+            return
+        toggle_favorite_setting(key)
+        self._update_favorite_button()
+        self.favorites_changed.emit()
+        if self.category_combo.currentText() == CAT_FAVORITES:
+            self._populate_settings()
+
+    def _update_favorite_button(self) -> None:
+        key = self.setting.currentData()
+        if not key:
+            self.fav_button.setEnabled(False)
+            self.fav_button.setText("☆")
+            self.fav_button.setStyleSheet("font-size: 13pt; padding: 2px 7px; color: #555e68;")
+            self.fav_button.setToolTip("Select a setting to save as favorite")
+            return
+        is_fav = is_favorite_setting(key)
+        self.fav_button.setEnabled(True)
+        self.fav_button.setText("★" if is_fav else "☆")
+        if is_fav:
+            self.fav_button.setStyleSheet("font-size: 13pt; padding: 2px 7px; color: #f4bd62; font-weight: bold;")
+            self.fav_button.setToolTip(f"Remove '{key}' from Favorites (★)")
+        else:
+            self.fav_button.setStyleSheet("font-size: 13pt; padding: 2px 7px; color: #85919d;")
+            self.fav_button.setToolTip(f"Save '{key}' to Favorites (☆)")
+
+    def update_favorite_state(self) -> None:
+        self._update_favorite_button()
+        if self.category_combo.currentText() == CAT_FAVORITES:
+            self._populate_settings()
+
+    def _rebuild_preset_chips(self, presets: List[PresetValue]) -> None:
+        while self.chips_layout.count() > 1:
+            item = self.chips_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._preset_chips.clear()
+
+        if not presets:
+            self.presets_header.hide()
+            self.chips_scroll.hide()
+            return
+
+        self.presets_header.show()
+        self.chips_scroll.show()
+
+        for p in presets:
+            btn = QPushButton(p.display_name())
+            btn.setObjectName("chip")
+            btn.setCheckable(True)
+            btn.setProperty("preset_value", p.value)
+            btn.setProperty("display_name", p.display_name())
+            btn.setToolTip(p.description or f"Preset value: {p.value}")
+            btn.clicked.connect(lambda checked, val=p.value: self._toggle_preset_chip(val))
+            self.chips_layout.insertWidget(self.chips_layout.count() - 1, btn)
+            self._preset_chips.append(btn)
+
+    def _toggle_preset_chip(self, val: str) -> None:
+        val = str(val).strip()
+        if not val:
+            return
+        current_values = [v.strip() for v in self.values.text().split(",") if v.strip()]
+        if val in current_values:
+            current_values = [v for v in current_values if v != val]
+        else:
+            current_values.append(val)
+        self.values.setText(", ".join(current_values))
+
+    def _sync_chips_with_values(self) -> None:
+        current_values = {v.strip() for v in self.values.text().split(",") if v.strip()}
+        for chip in self._preset_chips:
+            val = chip.property("preset_value")
+            disp = chip.property("display_name") or val
+            is_active = val in current_values
+            chip.blockSignals(True)
+            chip.setChecked(is_active)
+            chip.setText(f"✓ {disp}" if is_active else disp)
+            chip.blockSignals(False)
+
+    def _on_values_text_changed(self) -> None:
+        self._sync_chips_with_values()
+        self.changed.emit()
+
+    def set_dimension_by_key(self, key: str, values: Optional[List[str]] = None) -> bool:
+        dim = self.catalog.get_dimension(key)
+        if not dim:
+            return False
+
+        current_cat = self.category_combo.currentText()
+        cat_dims = (
+            self.catalog.get_all_available_dimensions()
+            if (current_cat == CAT_ALL or "All Settings" in current_cat)
+            else (
+                self.catalog.get_dimensions_for_category(current_cat, favorite_keys=get_favorite_settings())
+                if current_cat == CAT_FAVORITES
+                else self.catalog.get_dimensions_for_category(current_cat)
+            )
+        )
+        if not any(d.key == key for d in cat_dims):
+            cat_idx = self.category_combo.findText(dim.category)
+            if cat_idx >= 0:
+                self.category_combo.blockSignals(True)
+                self.category_combo.setCurrentIndex(cat_idx)
+                self.category_combo.blockSignals(False)
+
+        self.filter_entry.blockSignals(True)
+        self.filter_entry.clear()
+        self.filter_entry.blockSignals(False)
+
+        self._populate_settings(preserve_key=dim.key)
+
+        if values is not None:
+            self.values.setText(", ".join(str(v) for v in values))
+        elif dim.presets:
+            self.values.setText(", ".join(p.value for p in dim.presets[:2]))
+
+        self.changed.emit()
+        return True
 
     def definition(self) -> Optional[DimensionDefinition]:
         key = self.setting.currentData()
-        return next((item for item in self.definitions if item.key == key), None)
+        if not key:
+            return None
+        return self.catalog.get_dimension(key)
 
     def axis(self) -> Optional[AxisDefinition]:
         definition = self.definition()
@@ -372,14 +841,17 @@ class MatrixStudioWindow(QMainWindow):
         self.connection_data: Dict[str, Any] = {}
         self.connection_caps: Optional[Capabilities] = None
         self._threads: List[QThread] = []
+        self._workers: List[QObject] = []
+        self.connection_worker: Optional[ConnectionWorker] = None
+        self.current_run_worker: Optional[RunWorker] = None
 
         self.setWindowTitle("OrcaSlicer Matrix Studio")
         self.resize(1440, 900)
         self.setMinimumSize(1120, 720)
         self._build_ui()
         self._apply_theme(str(self.settings.value("theme", "dark")))
-        self._add_axis()
-        self._add_axis()
+        self._add_axis("layer_height", ["0.16", "0.20"])
+        self._add_axis("wall_loops", ["2", "3"])
         self.refresh_library()
         self.refresh_connection()
 
@@ -432,8 +904,18 @@ class MatrixStudioWindow(QMainWindow):
         self.run_search.textChanged.connect(self.refresh_library)
         layout.addWidget(self.run_search)
         self.run_list = QListWidget()
+        self.run_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.run_list.customContextMenuRequested.connect(self._run_list_context_menu)
         self.run_list.itemDoubleClicked.connect(self._open_library_item)
+        self.run_list.keyPressEvent = self._run_list_key_press
         layout.addWidget(self.run_list, 1)
+
+        run_actions_layout = QHBoxLayout()
+        self.remove_run_button = QPushButton("Remove run…")
+        self.remove_run_button.setToolTip("Remove selected run from history (with option to delete files)")
+        self.remove_run_button.clicked.connect(self._remove_selected_run)
+        run_actions_layout.addWidget(self.remove_run_button)
+        layout.addLayout(run_actions_layout)
 
         self.connection_label = QLabel("● Connecting…")
         self.connection_label.setObjectName("warning")
@@ -472,12 +954,23 @@ class MatrixStudioWindow(QMainWindow):
         axis_layout = QVBoxLayout(axis_host)
         axis_layout.setContentsMargins(0, 0, 10, 0)
         axis_header = QHBoxLayout()
+        axis_header.setSpacing(6)
         section = QLabel("Experiment axes")
         section.setObjectName("section")
+        self.load_matrix_button = QPushButton("📂 Load Test…")
+        self.load_matrix_button.setToolTip("Load a saved matrix test file (.orcamatrix.json) to repeat with this model")
+        self.load_matrix_button.clicked.connect(lambda: self.load_matrix_test_file())
+
+        self.save_matrix_button = QPushButton("💾 Save Test…")
+        self.save_matrix_button.setToolTip("Save this matrix configuration to repeat with other models")
+        self.save_matrix_button.clicked.connect(lambda: self.save_matrix_test_file())
+
         self.add_axis_button = QPushButton("+ Add axis")
         self.add_axis_button.clicked.connect(self._add_axis)
         axis_header.addWidget(section)
         axis_header.addStretch()
+        axis_header.addWidget(self.load_matrix_button)
+        axis_header.addWidget(self.save_matrix_button)
         axis_header.addWidget(self.add_axis_button)
         axis_layout.addLayout(axis_header)
         self.plate_preview = QLabel("Plate preview unavailable")
@@ -568,28 +1061,81 @@ class MatrixStudioWindow(QMainWindow):
         layout = QVBoxLayout(page)
         layout.setContentsMargins(28, 24, 28, 24)
         layout.addLayout(self._page_header("Analyze", "Compare time, material, and cost; open up to eight variants in synchronized Compare View."))
+
         top = QHBoxLayout()
+        top.setSpacing(8)
         self.result_banner = QLabel("Complete a run or open one from the library.")
         self.result_banner.setObjectName("muted")
+        top.addWidget(self.result_banner, 1)
+
+        self.copy_summary_btn = QPushButton("📋 Copy Summary")
+        self.copy_summary_btn.setToolTip("Copy Summary Markdown table to clipboard")
+        self.copy_summary_btn.setEnabled(False)
+        self.copy_summary_btn.clicked.connect(self._copy_summary_markdown)
+        top.addWidget(self.copy_summary_btn)
+
+        self.copy_filament_btn = QPushButton("📋 Copy Breakdown")
+        self.copy_filament_btn.setToolTip("Copy Filament Breakdown Markdown table to clipboard")
+        self.copy_filament_btn.setEnabled(False)
+        self.copy_filament_btn.clicked.connect(self._copy_filament_markdown)
+        top.addWidget(self.copy_filament_btn)
+
+        self.open_html_btn = QPushButton("🌐 Open HTML Report")
+        self.open_html_btn.setToolTip("Open full interactive dark-mode HTML report in browser with SVG Pareto and breakdown charts")
+        self.open_html_btn.setEnabled(False)
+        self.open_html_btn.clicked.connect(self._open_html_report)
+        top.addWidget(self.open_html_btn)
+
         self.open_compare = QPushButton("Open selected in Compare View")
         self.open_compare.setEnabled(False)
         self.open_compare.clicked.connect(self._launch_compare)
-        top.addWidget(self.result_banner)
-        top.addStretch()
         top.addWidget(self.open_compare)
         layout.addLayout(top)
+
+        # Tab widget for multiple report views
+        self.results_tabs = QTabWidget()
+
+        # --- TAB 1: Slicing Summary & Print-Time Chart ---
+        tab_summary = QWidget()
+        tab_summary_layout = QVBoxLayout(tab_summary)
+        tab_summary_layout.setContentsMargins(0, 10, 0, 0)
         split = QSplitter(Qt.Vertical)
+
         self.results_table = QTableWidget(0, 5)
         self.results_table.setHorizontalHeaderLabels(["Variant", "Print time", "Filament", "Cost", "State"])
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.results_table.horizontalHeader().setSortIndicator(0, Qt.AscendingOrder)
+        self.results_table.setSortingEnabled(True)
+        self.results_table.horizontalHeader().setSortIndicatorShown(True)
         self.results_table.itemSelectionChanged.connect(self._result_selection_changed)
         split.addWidget(self.results_table)
+
         self.chart_view = ResultsChart()
         split.addWidget(self.chart_view)
         split.setSizes([400, 340])
-        layout.addWidget(split, 1)
+        tab_summary_layout.addWidget(split)
+        self.results_tabs.addTab(tab_summary, "Slicing Summary")
+
+        # --- TAB 2: Filament by Line Type ---
+        tab_filament = QWidget()
+        tab_filament_layout = QVBoxLayout(tab_filament)
+        tab_filament_layout.setContentsMargins(0, 10, 0, 0)
+
+        self.filament_table = QTableWidget(0, 9)
+        self.filament_table.setHorizontalHeaderLabels([
+            "Variant", "Inner wall", "Outer wall", "Infill", "Solid infill", "Top surface", "Support", "Brim", "Total"
+        ])
+        self.filament_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.filament_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.filament_table.horizontalHeader().setSortIndicator(0, Qt.AscendingOrder)
+        self.filament_table.setSortingEnabled(True)
+        self.filament_table.horizontalHeader().setSortIndicatorShown(True)
+        tab_filament_layout.addWidget(self.filament_table)
+        self.results_tabs.addTab(tab_filament, "Filament by Line Type")
+
+        layout.addWidget(self.results_tabs, 1)
         return page
 
     def _build_settings_page(self) -> QWidget:
@@ -640,16 +1186,36 @@ class MatrixStudioWindow(QMainWindow):
         for i, button in enumerate(self.nav_buttons):
             button.setChecked(i == index)
 
-    def _add_axis(self) -> None:
+    def _add_axis(self, default_key: Optional[str] = None, default_values: Optional[List[str]] = None) -> None:
         if len(self.axes) >= 3:
             return
-        card = AxisCard(self.definitions, len(self.axes))
+        if default_key is None:
+            existing_keys = {c.definition().key for c in self.axes if c.definition()}
+            defaults = [
+                ("layer_height", ["0.16", "0.20"]),
+                ("wall_loops", ["2", "3"]),
+                ("sparse_infill_density", ["15%", "25%"]),
+                ("wall_generator", ["classic", "arachne"]),
+            ]
+            for candidate_key, candidate_vals in defaults:
+                if candidate_key not in existing_keys:
+                    default_key = candidate_key
+                    default_values = candidate_vals
+                    break
+        card = AxisCard(self.definitions, len(self.axes), catalog=self.catalog)
+        if default_key:
+            card.set_dimension_by_key(default_key, default_values)
         card.changed.connect(self._update_preview)
         card.remove_requested.connect(self._remove_axis)
+        card.favorites_changed.connect(self._on_favorites_changed)
         self.axes.append(card)
         self.axis_container.insertWidget(self.axis_container.count() - 1, card)
         self.add_axis_button.setEnabled(len(self.axes) < 3)
         self._update_preview()
+
+    def _on_favorites_changed(self) -> None:
+        for card in self.axes:
+            card.update_favorite_state()
 
     def _remove_axis(self, card: AxisCard) -> None:
         if card not in self.axes:
@@ -704,18 +1270,35 @@ class MatrixStudioWindow(QMainWindow):
         thread = QThread(self)
         worker = ConnectionWorker(self.base_url, self.api_token)
         worker.moveToThread(thread)
+        thread._worker = worker
         thread.started.connect(worker.run)
         worker.succeeded.connect(self._connection_succeeded)
         worker.failed.connect(self._connection_failed)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+
+        def _cleanup() -> None:
+            if thread in self._threads:
+                self._threads.remove(thread)
+            if worker in self._workers:
+                self._workers.remove(worker)
+            if getattr(self, "connection_worker", None) is worker:
+                self.connection_worker = None
+            if hasattr(thread, "_worker"):
+                thread._worker = None
+
+        thread.finished.connect(_cleanup)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: self._threads.remove(thread) if thread in self._threads else None)
+        self.connection_worker = worker
         self._threads.append(thread)
+        self._workers.append(worker)
         thread.start()
 
     @Slot(object, object, object, bytes)
     def _connection_succeeded(self, caps: Capabilities, status: Dict[str, Any], objects: List[Dict[str, Any]], preview: bytes) -> None:
+        sender = self.sender()
+        if sender is not None and getattr(self, "connection_worker", None) is not None and sender is not self.connection_worker:
+            return
         self.connection_caps = caps
         self.connection_data = status
         self.connection_label.setText(f"● Connected · {caps.app_version}")
@@ -739,6 +1322,9 @@ class MatrixStudioWindow(QMainWindow):
 
     @Slot(str)
     def _connection_failed(self, message: str) -> None:
+        sender = self.sender()
+        if sender is not None and getattr(self, "connection_worker", None) is not None and sender is not self.connection_worker:
+            return
         self.connection_caps = None
         self.connection_label.setText("● OrcaSlicer unavailable")
         self.connection_label.setObjectName("warning")
@@ -781,6 +1367,7 @@ class MatrixStudioWindow(QMainWindow):
         thread = QThread(self)
         worker = RunWorker(self.base_url, self.api_token, bundle, run_dir, self.store)
         worker.moveToThread(thread)
+        thread._worker = worker
         thread.started.connect(worker.run)
         worker.progress.connect(self._run_progress)
         worker.eta_requested.connect(self._eta_requested)
@@ -789,9 +1376,26 @@ class MatrixStudioWindow(QMainWindow):
         self.cancel_requested.connect(worker.cancel, Qt.DirectConnection)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
+
+        def _cleanup() -> None:
+            try:
+                self.cancel_requested.disconnect(worker.cancel)
+            except (RuntimeError, TypeError):
+                pass
+            if thread in self._threads:
+                self._threads.remove(thread)
+            if worker in self._workers:
+                self._workers.remove(worker)
+            if getattr(self, "current_run_worker", None) is worker:
+                self.current_run_worker = None
+            if hasattr(thread, "_worker"):
+                thread._worker = None
+
+        thread.finished.connect(_cleanup)
         thread.finished.connect(thread.deleteLater)
-        thread.finished.connect(lambda: self._threads.remove(thread) if thread in self._threads else None)
+        self.current_run_worker = worker
         self._threads.append(thread)
+        self._workers.append(worker)
         thread.start()
 
     @Slot(object, object, str, float)
@@ -820,6 +1424,10 @@ class MatrixStudioWindow(QMainWindow):
         self.cancel_button.setEnabled(False)
         self.library.upsert(bundle, Path(run_dir))
         self.refresh_library()
+        try:
+            generate_bundle_html_report(bundle, Path(run_dir))
+        except Exception:
+            pass
         self._populate_results(bundle)
         self._show_page(2)
 
@@ -836,28 +1444,113 @@ class MatrixStudioWindow(QMainWindow):
                 self.run_variants.setItem(row, column, QTableWidgetItem(value))
 
     def _populate_results(self, bundle: RunBundle) -> None:
+        # Populate Tab 1: Slicing Summary table
+        self.results_table.setSortingEnabled(False)
         self.results_table.setRowCount(len(bundle.variants))
         chart_values: List[float] = []
         categories: List[str] = []
+
+        state_prio = {"completed": 0, "running": 1, "pending": 2, "failed": 3, "cancelled": 4}
+
         for row, variant in enumerate(bundle.variants):
             stats = variant.stats or {}
             seconds = stats.get("time_s")
             mass = stats.get("filament_g")
             cost = stats.get("cost_usd")
-            values = [
-                variant.name,
-                f"{float(seconds) / 60:.1f} min" if seconds is not None else "—",
-                f"{float(mass):.1f} g" if mass is not None else "—",
-                f"${float(cost):.2f}" if cost is not None else "—",
-                variant.state,
-            ]
-            for column, value in enumerate(values):
-                self.results_table.setItem(row, column, QTableWidgetItem(value))
+
+            # Variant name
+            var_sort = variant.ordinal if variant.ordinal is not None else row
+            var_item = SortableTableWidgetItem(variant.name, sort_key=var_sort, user_data=variant.id)
+            var_item.setToolTip(variant.name)
+            self.results_table.setItem(row, 0, var_item)
+
+            # Print time (sorted numerically by seconds)
+            if seconds is not None:
+                time_item = SortableTableWidgetItem(f"{float(seconds) / 60:.1f} min", sort_key=float(seconds), user_data=variant.id)
+            else:
+                time_item = SortableTableWidgetItem("—", sort_key=float("inf"), user_data=variant.id)
+            time_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(row, 1, time_item)
+
+            # Filament mass (sorted numerically by grams)
+            if mass is not None:
+                mass_item = SortableTableWidgetItem(f"{float(mass):.1f} g", sort_key=float(mass), user_data=variant.id)
+            else:
+                mass_item = SortableTableWidgetItem("—", sort_key=float("inf"), user_data=variant.id)
+            mass_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(row, 2, mass_item)
+
+            # Cost (sorted numerically by USD)
+            if cost is not None:
+                cost_item = SortableTableWidgetItem(f"${float(cost):.2f}", sort_key=float(cost), user_data=variant.id)
+            else:
+                cost_item = SortableTableWidgetItem("—", sort_key=float("inf"), user_data=variant.id)
+            cost_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(row, 3, cost_item)
+
+            # State
+            prio = state_prio.get(variant.state, 9)
+            state_item = SortableTableWidgetItem(variant.state, sort_key=(prio, variant.name), user_data=variant.id)
+            state_item.setTextAlignment(Qt.AlignCenter)
+            self.results_table.setItem(row, 4, state_item)
+
             chart_values.append(float(seconds or 0) / 60.0)
             categories.append(str(variant.ordinal))
+
+        self.results_table.setSortingEnabled(True)
         self.chart_view.set_values(chart_values, categories, self.theme.currentText() == "dark")
+
+        # Populate Tab 2: Filament by Line Type table
+        self.filament_table.setSortingEnabled(False)
+        self.filament_table.setRowCount(len(bundle.variants))
+
+        role_keys = [
+            ("Inner wall", ["Inner wall"]),
+            ("Outer wall", ["Outer wall"]),
+            ("Infill", ["Sparse infill", "Infill"]),
+            ("Solid infill", ["Internal solid infill", "Solid infill"]),
+            ("Top surface", ["Top surface"]),
+            ("Support", ["Support", "Support interface"]),
+            ("Brim", ["Brim"]),
+        ]
+
+        for row, variant in enumerate(bundle.variants):
+            stats = variant.stats or {}
+            by_role = stats.get("filament_by_role") or {}
+            total_mass = stats.get("filament_g")
+
+            var_sort = variant.ordinal if variant.ordinal is not None else row
+            var_item = SortableTableWidgetItem(variant.name, sort_key=var_sort, user_data=variant.id)
+            var_item.setToolTip(variant.name)
+            self.filament_table.setItem(row, 0, var_item)
+
+            col_idx = 1
+            for header_name, lookup_roles in role_keys:
+                role_val = sum(float(by_role.get(r, 0.0)) for r in lookup_roles if r in by_role)
+                if role_val > 0.001:
+                    cell_item = SortableTableWidgetItem(f"{role_val:.2f} g", sort_key=role_val, user_data=variant.id)
+                elif by_role:
+                    cell_item = SortableTableWidgetItem("0.00 g", sort_key=0.0, user_data=variant.id)
+                else:
+                    cell_item = SortableTableWidgetItem("—", sort_key=float("inf"), user_data=variant.id)
+                cell_item.setTextAlignment(Qt.AlignCenter)
+                self.filament_table.setItem(row, col_idx, cell_item)
+                col_idx += 1
+
+            if total_mass is not None:
+                tot_item = SortableTableWidgetItem(f"{float(total_mass):.1f} g", sort_key=float(total_mass), user_data=variant.id)
+            else:
+                tot_item = SortableTableWidgetItem("—", sort_key=float("inf"), user_data=variant.id)
+            tot_item.setTextAlignment(Qt.AlignCenter)
+            self.filament_table.setItem(row, col_idx, tot_item)
+
+        self.filament_table.setSortingEnabled(True)
+
         completed = sum(1 for item in bundle.variants if item.state == "completed")
         self.result_banner.setText(f"{completed}/{len(bundle.variants)} variants completed · {bundle.state.replace('_', ' ').title()}")
+        self.open_html_btn.setEnabled(True)
+        self.copy_summary_btn.setEnabled(True)
+        self.copy_filament_btn.setEnabled(True)
 
     def _result_selection_changed(self) -> None:
         selected = sorted({index.row() for index in self.results_table.selectedIndexes()})
@@ -866,8 +1559,16 @@ class MatrixStudioWindow(QMainWindow):
     def _launch_compare(self) -> None:
         if not self.current_bundle or not self.current_run_dir:
             return
-        rows = sorted({index.row() for index in self.results_table.selectedIndexes()})
-        ids = [self.current_bundle.variants[row].id for row in rows[:8]]
+        selected_rows = sorted({index.row() for index in self.results_table.selectedIndexes()})
+        ids: List[str] = []
+        for row in selected_rows[:8]:
+            item = self.results_table.item(row, 0)
+            if item:
+                var_id = item.data(Qt.UserRole)
+                if var_id:
+                    ids.append(str(var_id))
+        if not ids:
+            return
         executable = self.viewer_executable_edit.text().strip() or _default_viewer_executable()
         try:
             subprocess.Popen(
@@ -877,6 +1578,255 @@ class MatrixStudioWindow(QMainWindow):
         except OSError as exc:
             QMessageBox.warning(self, "Could not open Compare View", str(exc))
 
+    def _copy_summary_markdown(self) -> None:
+        if not self.current_bundle:
+            return
+        md = self.current_bundle.comparison.get("summary_markdown", "")
+        if not md:
+            from .analytics import compute_matrix_comparison
+            from .studio_runner import StudioRunner
+            completed = [StudioRunner._variant_for_analytics(v) for v in self.current_bundle.variants if v.state == "completed"]
+            if completed:
+                comp = compute_matrix_comparison(completed, completed[0]["name"])
+                md = comp.get("summary_markdown", "")
+        if md:
+            QApplication.clipboard().setText(md)
+            self.result_banner.setText("✓ Summary Markdown copied to clipboard!")
+
+    def _copy_filament_markdown(self) -> None:
+        if not self.current_bundle:
+            return
+        md = self.current_bundle.comparison.get("line_type_markdown", "")
+        if not md:
+            from .analytics import compute_matrix_comparison
+            from .studio_runner import StudioRunner
+            completed = [StudioRunner._variant_for_analytics(v) for v in self.current_bundle.variants if v.state == "completed"]
+            if completed:
+                comp = compute_matrix_comparison(completed, completed[0]["name"])
+                md = comp.get("line_type_markdown", "")
+        if md:
+            QApplication.clipboard().setText(md)
+            self.result_banner.setText("✓ Filament breakdown Markdown copied to clipboard!")
+
+    def _open_html_report(self) -> None:
+        if not self.current_bundle or not self.current_run_dir:
+            QMessageBox.information(self, "No Run Selected", "Select or complete a run first to view its report.")
+            return
+        try:
+            report_path = generate_bundle_html_report(self.current_bundle, self.current_run_dir)
+            import webbrowser
+            webbrowser.open(report_path.as_uri())
+            self.result_banner.setText(f"✓ Opened HTML report: {report_path.name}")
+        except Exception as exc:
+            QMessageBox.warning(self, "Could not open HTML report", str(exc))
+
+    def save_matrix_test_file(self, target_path: Optional[Union[str, Path]] = None) -> Optional[Path]:
+        axes_defs = self._axis_definitions()
+        if not axes_defs:
+            QMessageBox.warning(self, "No Axes Configured", "Please configure at least one axis with valid values before saving.")
+            return None
+
+        if target_path is None:
+            slug = "_x_".join(a.key for a in axes_defs)
+            default_name = f"matrix_{slug}.orcamatrix.json"
+            documents_dir = Path.home() / "Documents" / "OrcaMatrix"
+            documents_dir.mkdir(parents=True, exist_ok=True)
+            default_path = str(documents_dir / default_name)
+            chosen, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Matrix Test",
+                default_path,
+                "OrcaSlicer Matrix Test (*.orcamatrix.json *.json);;All Files (*)",
+            )
+            if not chosen:
+                return None
+            target_path = Path(chosen)
+        else:
+            target_path = Path(target_path)
+
+        recipe = {
+            "format": "orcaslicer_matrix_test",
+            "schema_version": 1,
+            "name": " × ".join(a.label for a in axes_defs),
+            "created_utc": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "axes": [
+                {
+                    "key": a.key,
+                    "label": a.label,
+                    "values": list(a.values),
+                }
+                for a in axes_defs
+            ],
+        }
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(recipe, f, indent=2)
+
+        self.profile_label.setText(f"Saved matrix test: {target_path.name}")
+        return target_path
+
+    def load_matrix_test_file(self, source_path: Optional[Union[str, Path]] = None) -> bool:
+        if source_path is None:
+            documents_dir = Path.home() / "Documents" / "OrcaMatrix"
+            chosen, _ = QFileDialog.getOpenFileName(
+                self,
+                "Load Matrix Test",
+                str(documents_dir) if documents_dir.exists() else "",
+                "OrcaSlicer Matrix Test (*.orcamatrix.json *.json);;All Files (*)",
+            )
+            if not chosen:
+                return False
+            source_path = Path(chosen)
+        else:
+            source_path = Path(source_path)
+
+        if not source_path.is_file():
+            QMessageBox.warning(self, "File Not Found", f"Could not find file: {source_path}")
+            return False
+
+        try:
+            with open(source_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            QMessageBox.critical(self, "Failed to read file", f"Invalid JSON file: {exc}")
+            return False
+
+        axes_data: List[Dict[str, Any]] = []
+        if isinstance(data, dict):
+            if "axes" in data and isinstance(data["axes"], list):
+                axes_data = data["axes"]
+            elif "matrix" in data and isinstance(data["matrix"], dict):
+                axes_data = [{"key": k, "values": v} for k, v in data["matrix"].items()]
+        elif isinstance(data, list):
+            axes_data = data
+
+        if not axes_data:
+            QMessageBox.warning(self, "Invalid Matrix Test", "The selected file does not contain any matrix axes configurations.")
+            return False
+
+        # Clear existing axis cards
+        while self.axes:
+            self._remove_axis(self.axes[0])
+
+        loaded_count = 0
+        for axis_info in axes_data[:3]:
+            if not isinstance(axis_info, dict):
+                continue
+            key = axis_info.get("key")
+            vals = axis_info.get("values")
+            if not key or not self.catalog.get_dimension(key):
+                continue
+            if isinstance(vals, (list, tuple)):
+                str_vals = [str(v).strip() for v in vals if str(v).strip()]
+            elif isinstance(vals, str):
+                str_vals = [v.strip() for v in vals.split(",") if v.strip()]
+            else:
+                str_vals = []
+            self._add_axis(default_key=key, default_values=str_vals)
+            loaded_count += 1
+
+        if loaded_count == 0:
+            QMessageBox.warning(self, "No Valid Settings Found", "None of the settings in the matrix file matched available settings in OrcaSlicer.")
+            return False
+
+        self._show_page(0)
+        self.profile_label.setText(f"Loaded matrix test: {source_path.name} ({loaded_count} axes)")
+        return True
+
+    def _run_list_key_press(self, event: Any) -> None:
+        if event.key() == Qt.Key_Delete:
+            self._remove_selected_run()
+            return
+        QListWidget.keyPressEvent(self.run_list, event)
+
+    def _run_list_context_menu(self, pos: QPoint) -> None:
+        item = self.run_list.itemAt(pos)
+        if not item:
+            return
+        menu = QMenu(self)
+        open_action = menu.addAction("Open / Analyze")
+        reuse_action = menu.addAction("Load Matrix into Builder")
+        remove_action = menu.addAction("Remove Run…")
+        chosen = menu.exec(self.run_list.mapToGlobal(pos))
+        if chosen == open_action:
+            self._open_library_item(item)
+        elif chosen == reuse_action:
+            run_path = Path(item.data(Qt.UserRole))
+            self.load_matrix_test_file(run_path / "run.json")
+        elif chosen == remove_action:
+            self._remove_run_item(item)
+
+    def _remove_selected_run(self) -> None:
+        item = self.run_list.currentItem()
+        if not item:
+            if self.run_list.count() > 0:
+                item = self.run_list.item(0)
+            else:
+                return
+        self._remove_run_item(item)
+
+    def _remove_run_item(self, item: QListWidgetItem) -> None:
+        path = item.data(Qt.UserRole)
+        run_id = item.data(Qt.UserRole + 1)
+        name = item.data(Qt.UserRole + 2) or "this run"
+
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Question)
+        msg.setWindowTitle("Remove Run")
+        msg.setText(f"Remove '{name}' from recent runs?")
+        msg.setInformativeText(
+            "Would you also like to permanently delete the run folder and sliced files from disk?"
+        )
+        delete_files_btn = msg.addButton("Delete Files & Remove", QMessageBox.DestructiveRole)
+        remove_only_btn = msg.addButton("Remove from List Only", QMessageBox.ActionRole)
+        cancel_btn = msg.addButton("Cancel", QMessageBox.RejectRole)
+        msg.setDefaultButton(cancel_btn)
+
+        msg.exec()
+        clicked = msg.clickedButton()
+        if clicked == cancel_btn:
+            return
+
+        delete_files = (clicked == delete_files_btn)
+        self.remove_run(run_id=run_id, path=path, delete_files=delete_files)
+
+    def remove_run(
+        self,
+        run_id: Optional[str] = None,
+        path: Optional[str] = None,
+        delete_files: bool = False,
+    ) -> None:
+        """Remove run from library database and optionally delete run folder from disk."""
+        if delete_files and path:
+            run_path = Path(path)
+            if run_path.exists() and run_path.is_dir():
+                shutil.rmtree(run_path, ignore_errors=True)
+
+        self.library.delete_run(run_id=run_id, path=path)
+
+        if getattr(self, "current_run_dir", None) and path and str(self.current_run_dir) == str(Path(path)):
+            self.current_bundle = None
+            self.current_run_dir = None
+            if hasattr(self, "results_table"):
+                self.results_table.setRowCount(0)
+            if hasattr(self, "filament_table"):
+                self.filament_table.setRowCount(0)
+            if hasattr(self, "chart_view"):
+                self.chart_view.set_values([], [], self.theme.currentText() == "dark")
+            if hasattr(self, "result_banner"):
+                self.result_banner.setText("Complete a run or open one from the library.")
+            if hasattr(self, "open_compare"):
+                self.open_compare.setEnabled(False)
+            if hasattr(self, "open_html_btn"):
+                self.open_html_btn.setEnabled(False)
+            if hasattr(self, "copy_summary_btn"):
+                self.copy_summary_btn.setEnabled(False)
+            if hasattr(self, "copy_filament_btn"):
+                self.copy_filament_btn.setEnabled(False)
+
+        self.refresh_library()
+
     def refresh_library(self) -> None:
         if not hasattr(self, "run_list"):
             return
@@ -884,6 +1834,8 @@ class MatrixStudioWindow(QMainWindow):
         for row in self.library.list_runs(self.run_search.text() if hasattr(self, "run_search") else ""):
             item = QListWidgetItem(f"{row['name']}\n{row['variant_count']} variants · {row['state']}")
             item.setData(Qt.UserRole, row["path"])
+            item.setData(Qt.UserRole + 1, row.get("run_id", ""))
+            item.setData(Qt.UserRole + 2, row["name"])
             self.run_list.addItem(item)
 
     def _open_library_item(self, item: QListWidgetItem) -> None:
@@ -947,6 +1899,17 @@ class MatrixStudioWindow(QMainWindow):
         self.settings.setValue("theme", theme)
         if hasattr(self, "current_bundle") and self.current_bundle:
             self._populate_results(self.current_bundle)
+
+    def closeEvent(self, event: Any) -> None:
+        self.cancel_requested.emit()
+        for thread in list(self._threads):
+            try:
+                if thread.isRunning():
+                    thread.quit()
+                    thread.wait(2000)
+            except RuntimeError:
+                pass
+        super().closeEvent(event)
 
 
 def build_parser() -> argparse.ArgumentParser:

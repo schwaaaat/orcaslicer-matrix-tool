@@ -59,6 +59,16 @@ class TestRunBundle(unittest.TestCase):
             self.assertEqual(rows[0]["run_id"], bundle.run_id)
             self.assertTrue((Path(rows[0]["path"]) / "run.json").is_file())
 
+            # Delete by run_id
+            library.delete_run(run_id=bundle.run_id)
+            self.assertEqual(len(library.list_runs()), 0)
+
+            # Re-insert and delete by path
+            library.upsert(bundle, run_dir)
+            self.assertEqual(len(library.list_runs()), 1)
+            library.delete_run(path=str(run_dir))
+            self.assertEqual(len(library.list_runs()), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

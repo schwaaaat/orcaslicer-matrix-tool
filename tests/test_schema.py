@@ -62,6 +62,11 @@ class TestSettingsSchema(unittest.TestCase):
         with self.assertRaises(ValueError):
             resolve_matrix_dict({"layer_height": []})
 
+    def test_locate_schema_finds_in_packaged_locations(self):
+        found = SettingsSchema._locate_schema(None)
+        self.assertTrue(found.is_file())
+        self.assertEqual(found.name, "print_settings_schema.json")
+
 
 if __name__ == "__main__":
     unittest.main()

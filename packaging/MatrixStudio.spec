@@ -2,6 +2,8 @@
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 datas = collect_data_files("orcaslicer_matrix")
+datas.append(("../print_settings_schema.json", "."))
+datas.append(("../print_settings_schema.json", "orcaslicer_matrix"))
 hiddenimports = collect_submodules("keyring.backends")
 
 a = Analysis(
