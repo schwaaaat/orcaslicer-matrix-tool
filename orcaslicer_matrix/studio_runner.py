@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from .analytics import compute_matrix_comparison, parse_gcode_filament_by_role
+from .analytics import compute_matrix_comparison, generate_html_report, parse_gcode_filament_by_role
 from .run_bundle import RunBundle, RunBundleStore, VariantRecord
 from .studio_client import StudioApiError, StudioClient
 
@@ -68,10 +68,15 @@ class StudioRunner:
         if missing:
             raise StudioApiError(f"Settings are not available in the active profile: {', '.join(missing)}")
 
+        presets = status.get("presets", {})
+        filaments = presets.get("filaments", [])
         bundle.source = {
             "app": status.get("app", "OrcaSlicer"),
             "app_version": status.get("app_version") or status.get("version", "unknown"),
-            "presets": status.get("presets", {}),
+            "presets": presets,
+            "printer_preset": presets.get("printer", "Default"),
+            "print_preset": presets.get("print", "Default"),
+            "filament_preset": ", ".join(str(item) for item in filaments) if isinstance(filaments, list) else str(filaments),
             "plate_objects": [item.get("name", "") for item in objects if item.get("name")],
         }
         bundle.baseline_snapshot = {key: config[key] for key in target_keys}
@@ -117,12 +122,29 @@ class StudioRunner:
                 terminal_state = "recovery_required"
 
         run_error = bundle.comparison.get("run_error")
-        completed = [self._variant_for_analytics(item) for item in bundle.variants if item.state == "completed"]
+        analytics_variants = [self._variant_for_analytics(item) for item in bundle.variants]
+        completed = [item for item in analytics_variants if not item.get("error") and (item.get("stats") or {}).get("time_s") is not None]
         if completed:
-            bundle.comparison = compute_matrix_comparison(completed, completed[0]["name"])
+            bundle.comparison = compute_matrix_comparison(analytics_variants, completed[0]["name"])
             if run_error:
                 bundle.comparison["run_error"] = run_error
         self._save(bundle, run_dir, terminal_state)
+        if completed:
+            try:
+                html_path = generate_html_report(bundle.to_dict(), bundle.comparison, Path(run_dir) / "report.html")
+                markdown = "\n\n".join(
+                    part for part in (
+                        bundle.comparison.get("summary_markdown", ""),
+                        bundle.comparison.get("line_type_markdown", ""),
+                    ) if part
+                )
+                markdown_path = Path(run_dir) / "report.md"
+                markdown_path.write_text(markdown + "\n", encoding="utf-8")
+                bundle.comparison["html_report"] = str(html_path.relative_to(run_dir)).replace("\\", "/")
+                bundle.comparison["markdown_report"] = str(markdown_path.relative_to(run_dir)).replace("\\", "/")
+            except Exception as exc:
+                bundle.comparison["report_error"] = str(exc)
+            self._save(bundle, run_dir)
         self._emit(bundle, None, terminal_state.replace("_", " ").title(), 1.0)
         return bundle
 

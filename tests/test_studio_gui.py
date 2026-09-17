@@ -2,6 +2,7 @@ import gc
 import json
 from pathlib import Path
 import subprocess
+import threading
 
 import pytest
 from PySide6.QtCore import Qt
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import QApplication
 from orcaslicer_matrix.catalog import CAT_COMMON, CAT_FAVORITES, CURATED_OVERRIDES
 from orcaslicer_matrix.run_bundle import AxisDefinition, RunBundle, VariantRecord
 from orcaslicer_matrix.studio import (
+    EtaRequest,
     MatrixStudioWindow,
     ResultsChart,
     SortableTableWidgetItem,
@@ -62,6 +64,15 @@ def test_local_endpoint_detection():
     assert _is_local_endpoint("http://localhost:13130")
     assert _is_local_endpoint("http://[::1]:13130")
     assert not _is_local_endpoint("https://slicer.example.test")
+
+
+def test_eta_auto_approval_policy(window):
+    window.require_eta_approval.setChecked(True)
+    window.auto_confirm_under.setValue(60)
+    request = EtaRequest(4.0, 3, 45.0, threading.Event())
+    window._eta_requested(request)
+    assert request.accepted
+    assert request.event.is_set()
 
 
 def test_results_chart_renders_without_qtcharts(qtbot):
@@ -381,6 +392,8 @@ def test_results_table_column_sorting_and_compare_launch(window, tmp_path, monke
     window._populate_results(bundle)
 
     assert window.results_table.rowCount() == 3
+    assert window.results_table.columnCount() == 7
+    assert "Recommended:" in window.recommendation_title.text()
     # Initial order: v1, v2, v3
     assert window.results_table.item(0, 0).text() == "0.16"
     assert window.results_table.item(1, 0).text() == "0.20"

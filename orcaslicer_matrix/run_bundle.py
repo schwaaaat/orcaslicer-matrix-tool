@@ -65,6 +65,8 @@ class RunBundle:
             "soft_variant_limit": DEFAULT_SOFT_LIMIT,
             "hard_variant_limit": HARD_VARIANT_LIMIT,
             "viewer_page_size": VIEWER_PAGE_SIZE,
+            "require_eta_approval": True,
+            "auto_confirm_under_seconds": 30,
         }
     )
     comparison: Dict[str, Any] = field(default_factory=dict)

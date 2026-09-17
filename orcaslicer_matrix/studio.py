@@ -24,6 +24,7 @@ from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -62,6 +63,7 @@ from .catalog import (
     PresetValue,
     get_default_catalog,
 )
+from .analytics import compute_matrix_comparison
 from .matrix import VariantLimitExceededError, build_variants
 from .run_bundle import (
     AxisDefinition,
@@ -1092,6 +1094,20 @@ class MatrixStudioWindow(QMainWindow):
         top.addWidget(self.open_compare)
         layout.addLayout(top)
 
+        recommendation_card = QFrame()
+        recommendation_card.setObjectName("card")
+        recommendation_layout = QVBoxLayout(recommendation_card)
+        recommendation_layout.setContentsMargins(16, 12, 16, 12)
+        recommendation_layout.setSpacing(3)
+        self.recommendation_title = QLabel("Recommendation appears after a completed run")
+        self.recommendation_title.setObjectName("good")
+        self.recommendation_detail = QLabel("Matrix Studio favors warning-free variants, then the shortest print time.")
+        self.recommendation_detail.setObjectName("muted")
+        self.recommendation_detail.setWordWrap(True)
+        recommendation_layout.addWidget(self.recommendation_title)
+        recommendation_layout.addWidget(self.recommendation_detail)
+        layout.addWidget(recommendation_card)
+
         # Tab widget for multiple report views
         self.results_tabs = QTabWidget()
 
@@ -1101,8 +1117,8 @@ class MatrixStudioWindow(QMainWindow):
         tab_summary_layout.setContentsMargins(0, 10, 0, 0)
         split = QSplitter(Qt.Vertical)
 
-        self.results_table = QTableWidget(0, 5)
-        self.results_table.setHorizontalHeaderLabels(["Variant", "Print time", "Filament", "Cost", "State"])
+        self.results_table = QTableWidget(0, 7)
+        self.results_table.setHorizontalHeaderLabels(["Variant", "Print time", "Filament", "Cost", "State", "Δ time", "Δ filament"])
         self.results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.results_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.results_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -1168,11 +1184,21 @@ class MatrixStudioWindow(QMainWindow):
         root_row = QHBoxLayout()
         root_row.addWidget(self.run_root_edit, 1)
         root_row.addWidget(browse)
+        self.require_eta_approval = QCheckBox("Pause after the baseline before continuing")
+        self.require_eta_approval.setChecked(self.settings.value("require_eta_approval", True, type=bool))
+        self.auto_confirm_under = QSpinBox()
+        self.auto_confirm_under.setRange(0, 3600)
+        self.auto_confirm_under.setSuffix(" seconds")
+        self.auto_confirm_under.setSpecialValueText("Always ask")
+        self.auto_confirm_under.setValue(int(self.settings.value("auto_confirm_under_seconds", 30)))
+        self.auto_confirm_under.setToolTip("Automatically continue short estimated runs; set to 0 to always ask.")
         form.addRow("OrcaSlicer API", self.api_url)
         form.addRow("API token", self.api_token_edit)
         form.addRow("Compare Viewer", viewer_row)
         form.addRow("Theme", self.theme)
         form.addRow("Run library", root_row)
+        form.addRow("Baseline approval", self.require_eta_approval)
+        form.addRow("Auto-continue under", self.auto_confirm_under)
         save = QPushButton("Save settings")
         save.setObjectName("primary")
         save.clicked.connect(self._save_settings)
@@ -1355,6 +1381,8 @@ class MatrixStudioWindow(QMainWindow):
         name = " × ".join(f"{axis.label} ({len(axis.values)})" for axis in axes)
         bundle = RunBundle.create(name, axes, records)
         bundle.settings["soft_variant_limit"] = self.soft_limit.value()
+        bundle.settings["require_eta_approval"] = self.require_eta_approval.isChecked()
+        bundle.settings["auto_confirm_under_seconds"] = self.auto_confirm_under.value()
         run_dir = self.store.create_directory(bundle)
         self.store.save(run_dir, bundle)
         self.library.upsert(bundle, run_dir)
@@ -1408,6 +1436,11 @@ class MatrixStudioWindow(QMainWindow):
 
     @Slot(object)
     def _eta_requested(self, request: EtaRequest) -> None:
+        threshold = self.auto_confirm_under.value()
+        if not self.require_eta_approval.isChecked() or (threshold > 0 and request.estimated_seconds <= threshold):
+            request.accepted = True
+            request.event.set()
+            return
         minutes = math.ceil(request.estimated_seconds / 60)
         answer = QMessageBox.question(
             self,
@@ -1444,6 +1477,36 @@ class MatrixStudioWindow(QMainWindow):
                 self.run_variants.setItem(row, column, QTableWidgetItem(value))
 
     def _populate_results(self, bundle: RunBundle) -> None:
+        comparison = bundle.comparison or {}
+        if not comparison.get("summary_rows"):
+            analytic_variants = [
+                {
+                    "name": item.name,
+                    "changes": item.changes,
+                    "stats": item.stats,
+                    "warnings": item.warnings,
+                    "error": item.error,
+                }
+                for item in bundle.variants
+            ]
+            completed = [item for item in analytic_variants if not item.get("error") and (item.get("stats") or {}).get("time_s") is not None]
+            if analytic_variants:
+                comparison = compute_matrix_comparison(analytic_variants, completed[0]["name"] if completed else analytic_variants[0]["name"])
+                bundle.comparison = comparison
+        summary_by_name = {row.get("name"): row for row in comparison.get("summary_rows", [])}
+        recommended = comparison.get("recommended")
+        if recommended:
+            clean_recommended = summary_by_name.get(recommended, {}).get("clean_name", recommended)
+            self.recommendation_title.setText(f"Recommended: {clean_recommended}")
+            detail = comparison.get("recommendation_reason") or "Best warning-free time and material trade-off."
+            fastest = summary_by_name.get(comparison.get("fastest"), {}).get("clean_name", comparison.get("fastest"))
+            lightest = summary_by_name.get(comparison.get("lightest"), {}).get("clean_name", comparison.get("lightest"))
+            extrema = " · ".join(part for part in (f"Fastest: {fastest}" if fastest else "", f"Lightest: {lightest}" if lightest else "") if part)
+            self.recommendation_detail.setText(f"{detail}  {extrema}".strip())
+        else:
+            self.recommendation_title.setText("No recommendation available")
+            self.recommendation_detail.setText("Complete at least one successful slice to compare variants.")
+
         # Populate Tab 1: Slicing Summary table
         self.results_table.setSortingEnabled(False)
         self.results_table.setRowCount(len(bundle.variants))
@@ -1493,6 +1556,15 @@ class MatrixStudioWindow(QMainWindow):
             state_item = SortableTableWidgetItem(variant.state, sort_key=(prio, variant.name), user_data=variant.id)
             state_item.setTextAlignment(Qt.AlignCenter)
             self.results_table.setItem(row, 4, state_item)
+
+            summary = summary_by_name.get(variant.name, {})
+            delta_time = summary.get("delta_time_s")
+            delta_mass = summary.get("delta_filament_g")
+            is_baseline = bool(summary.get("is_baseline"))
+            time_text = "baseline" if is_baseline else (f"{float(delta_time) / 60:+.1f} min" if delta_time is not None else "—")
+            mass_text = "baseline" if is_baseline else (f"{float(delta_mass):+.1f} g" if delta_mass is not None else "—")
+            self.results_table.setItem(row, 5, SortableTableWidgetItem(time_text, sort_key=0.0 if is_baseline else delta_time))
+            self.results_table.setItem(row, 6, SortableTableWidgetItem(mass_text, sort_key=0.0 if is_baseline else delta_mass))
 
             chart_values.append(float(seconds or 0) / 60.0)
             categories.append(str(variant.ordinal))
@@ -1892,6 +1964,8 @@ class MatrixStudioWindow(QMainWindow):
         self.settings.setValue("runs_root", str(self.runs_root))
         self.settings.setValue("theme", self.theme.currentText())
         self.settings.setValue("soft_limit", self.soft_limit.value())
+        self.settings.setValue("require_eta_approval", self.require_eta_approval.isChecked())
+        self.settings.setValue("auto_confirm_under_seconds", self.auto_confirm_under.value())
         self.refresh_connection()
 
     def _apply_theme(self, theme: str) -> None:
