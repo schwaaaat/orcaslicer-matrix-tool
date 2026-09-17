@@ -20,6 +20,11 @@ This patch release fixes the Windows startup failure in v2.0.0:
 - The running frozen process loaded `shiboken6.abi3.dll`, `pyside6.abi3.dll`, `Qt6Core.dll`, `Qt6Gui.dll`, and `Qt6Widgets.dll` successfully.
 - Both final archives were integrity-tested after compression.
 
+## Checksums
+
+- Integrated package: `C208E4DAA9B23F69D84A6CFC668C5B189EAE0C94B1EF065BD9FCBD27CA3D5890`
+- Standalone package: `8AE967A9877F9E514854FC137D54943308E78506622C138EC28EDE1637F7B8DD`
+
 ## Which file should I download?
 
 ### `OrcaSlicer-MatrixStudio-v2.0.1-Windows-x64.zip` — recommended
@@ -31,3 +36,8 @@ The complete portable OrcaSlicer and Matrix Studio suite. Extract the entire ZIP
 Matrix Studio without OrcaSlicer. Use this only with the compatible Matrix Studio-enabled OrcaSlicer build.
 
 These community binaries are not code-signed, so Windows SmartScreen may show an **Unknown Publisher** warning.
+
+## Source code
+
+- Matrix Studio v2.0.1: https://github.com/schwaaaat/orcaslicer-matrix-tool/tree/v2.0.1
+- Integrated OrcaSlicer source: https://github.com/schwaaaat/OrcaSlicer/tree/matrix-studio-v2.0.1
