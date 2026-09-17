@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/matrix-studio-logo.png" width="230" alt="Matrix Studio logo: a printer nozzle above a phosphor-green data matrix">
+  <img src="docs/assets/logo.png" width="230" alt="Matrix Studio logo: a printer nozzle above a phosphor-green data matrix">
 </p>
 
 <h1 align="center">OrcaSlicer Matrix Studio</h1>
