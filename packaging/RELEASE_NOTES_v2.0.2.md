@@ -25,6 +25,11 @@ This patch release fixes local Remote API token discovery and persistence in Mat
 - Both frozen Windows executables passed the packaged Qt runtime smoke test.
 - OrcaSlicer's exact Matrix Studio `--connect http://127.0.0.1:13130` launch path was tested.
 
+## Checksums
+
+- Integrated package: `4A6E8C659A0599977469538083E8D6CC074C412014E12ECAF9CB620968FD982D`
+- Standalone package: `E294C8EB07B96829A8B4F77D416211445F859B0AD78CE79BD6C594193E3B7209`
+
 ## Which file should I download?
 
 ### `OrcaSlicer-MatrixStudio-v2.0.2-Windows-x64.zip` — recommended
@@ -34,3 +39,8 @@ The complete portable OrcaSlicer and Matrix Studio suite.
 ### `OrcaMatrixStudio-v2.0.2-Windows-x64.zip` — standalone companion
 
 Matrix Studio without OrcaSlicer. It still requires the compatible custom OrcaSlicer build for slicing.
+
+## Source code
+
+- Matrix Studio v2.0.2: https://github.com/schwaaaat/orcaslicer-matrix-tool/tree/v2.0.2
+- Integrated OrcaSlicer source: https://github.com/schwaaaat/OrcaSlicer/tree/matrix-studio-v2.0.2
