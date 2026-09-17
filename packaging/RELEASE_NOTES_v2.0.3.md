@@ -27,6 +27,13 @@ The complete portable OrcaSlicer build with Matrix Studio included. Extract the 
 
 Matrix Studio only. Use this when you already have the matching integrated OrcaSlicer build.
 
+## SHA-256 checksums
+
+```text
+0515ba4d973f608c2e1487add9b57d86e16d406561468949b63bd7c9c2d92da6  OrcaSlicer-MatrixStudio-v2.0.3-Windows-x64.zip
+bb2b0614d09406692b14be40f590d9cfb417cd7d050b15687c65c2b6eb780f3b  OrcaMatrixStudio-v2.0.3-Windows-x64.zip
+```
+
 ## Source
 
 - Matrix Studio v2.0.3: https://github.com/schwaaaat/orcaslicer-matrix-tool/tree/v2.0.3
