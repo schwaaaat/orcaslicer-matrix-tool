@@ -15,6 +15,8 @@ Prebuilt Windows x64 packages are available from the [latest GitHub release](htt
 
 Extract the entire ZIP before running it. No Python environment, compiler, or source build is required.
 
+See the [Windows v2.0.0 release guide](docs/WINDOWS_RELEASE.md) for installation, architecture, the complete change summary, verification details, and troubleshooting.
+
 ## Key Features
 
 - **Modern Qt Desktop UI**: Dark technical-studio design with Build, Active Run, Analyze, Settings, and searchable run-history workspaces.
