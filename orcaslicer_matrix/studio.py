@@ -156,18 +156,28 @@ def _is_local_endpoint(base_url: str) -> bool:
 
 
 def _stored_api_token(base_url: str) -> Optional[str]:
-    # Local OrcaSlicer owns and persists its current token. Prefer that live
-    # value so the Settings field auto-populates and token rotation is picked
-    # up on the next Studio launch. A keyring value remains the fallback for
-    # custom local instances whose configuration cannot be discovered.
-    if _is_local_endpoint(base_url):
-        discovered = discover_api_token()
-        if discovered:
-            return discovered
+    # OrcaSlicer passes its live in-memory token to Studio through the child
+    # environment. This must win over both saved and on-disk values because
+    # AppConfig may not have flushed a newly generated token yet.
+    environment_token = os.environ.get("ORCA_API_TOKEN", "").strip()
+    if environment_token:
+        return environment_token
+
+    # A user-confirmed credential is the next-best source. In particular, do
+    # not let a stale OrcaSlicer.conf token override a value that has already
+    # authenticated successfully and was saved from the Settings page.
     try:
-        return keyring.get_password(KEYRING_SERVICE, base_url)
+        stored = keyring.get_password(KEYRING_SERVICE, base_url)
     except KeyringError:
-        return None
+        stored = None
+    if stored and stored.strip():
+        return stored.strip()
+
+    # Standalone launches have no parent-provided environment. Fall back to
+    # OrcaSlicer's configuration only when no secure credential is available.
+    if _is_local_endpoint(base_url):
+        return discover_api_token()
+    return None
 
 
 def _default_viewer_executable() -> str:

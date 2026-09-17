@@ -68,14 +68,34 @@ def test_local_endpoint_detection():
     assert not _is_local_endpoint("https://slicer.example.test")
 
 
-def test_local_token_prefers_orcaslicer_discovery(monkeypatch):
-    monkeypatch.setattr("orcaslicer_matrix.studio.discover_api_token", lambda: "orca-current-token")
+def test_local_token_prefers_live_parent_environment(monkeypatch):
+    monkeypatch.setenv("ORCA_API_TOKEN", "orca-live-token")
+    monkeypatch.setattr("orcaslicer_matrix.studio.discover_api_token", lambda: "stale-config-token")
     monkeypatch.setattr(
         "orcaslicer_matrix.studio.keyring.get_password",
-        lambda *_args: pytest.fail("keyring fallback should not override the current OrcaSlicer token"),
+        lambda *_args: "stored-token",
     )
 
-    assert _stored_api_token("http://127.0.0.1:13130") == "orca-current-token"
+    assert _stored_api_token("http://127.0.0.1:13130") == "orca-live-token"
+
+
+def test_local_token_prefers_saved_credential_over_stale_config(monkeypatch):
+    monkeypatch.delenv("ORCA_API_TOKEN", raising=False)
+    monkeypatch.setattr("orcaslicer_matrix.studio.discover_api_token", lambda: "stale-config-token")
+    monkeypatch.setattr(
+        "orcaslicer_matrix.studio.keyring.get_password",
+        lambda *_args: "saved-working-token",
+    )
+
+    assert _stored_api_token("http://127.0.0.1:13130") == "saved-working-token"
+
+
+def test_local_token_uses_config_when_no_saved_credential(monkeypatch):
+    monkeypatch.delenv("ORCA_API_TOKEN", raising=False)
+    monkeypatch.setattr("orcaslicer_matrix.studio.discover_api_token", lambda: "config-token")
+    monkeypatch.setattr("orcaslicer_matrix.studio.keyring.get_password", lambda *_args: None)
+
+    assert _stored_api_token("http://127.0.0.1:13130") == "config-token"
 
 
 def test_local_token_save_survives_studio_relaunch(qtbot, monkeypatch, tmp_path):

@@ -1,11 +1,11 @@
-# Windows v2.0.2 release guide
+# Windows v2.0.3 release guide
 
-Matrix Studio v2.0.2 is distributed as a portable Windows x64 application. No Python runtime, compiler, or repository checkout is required.
+Matrix Studio v2.0.3 is distributed as a portable Windows x64 application. No Python runtime, compiler, or repository checkout is required.
 
 ## Recommended installation
 
 1. Open the [latest GitHub release](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest).
-2. Download `OrcaSlicer-MatrixStudio-v2.0.2-Windows-x64.zip` and `SHA256SUMS.txt`.
+2. Download `OrcaSlicer-MatrixStudio-v2.0.3-Windows-x64.zip` and `SHA256SUMS.txt`.
 3. Verify the ZIP's SHA-256 hash.
 4. Extract the **entire** ZIP to a normal writable folder.
 5. Run `orca-slicer.exe`.
@@ -16,7 +16,7 @@ The package is portable. To uninstall it, close both applications and remove the
 ## Package layout
 
 ```text
-OrcaSlicer-MatrixStudio-v2.0.2-Windows-x64/
+OrcaSlicer-MatrixStudio-v2.0.3-Windows-x64/
 ├── orca-slicer.exe
 ├── OrcaSlicer.dll
 ├── resources/
@@ -32,7 +32,7 @@ Keep this layout intact. OrcaSlicer discovers the companion under `tools/OrcaMat
 
 ## Standalone package
 
-`OrcaMatrixStudio-v2.0.2-Windows-x64.zip` contains only the companion application. It is useful when updating Matrix Studio independently, but it still requires a running compatible OrcaSlicer build for slicing.
+`OrcaMatrixStudio-v2.0.3-Windows-x64.zip` contains only the companion application. It is useful when updating Matrix Studio independently, but it still requires a running compatible OrcaSlicer build for slicing.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ The community build is currently unsigned. Verify the SHA-256 hash against the r
 
 Use the integrated OrcaSlicer build, keep OrcaSlicer running, and verify that its Remote API is enabled. Stock OrcaSlicer releases do not include the Matrix Studio v2 API.
 
-In v2.0.2 and newer, the local API token is read from OrcaSlicer's current configuration and shown in the masked API-token field automatically. A manually entered token is stored in Windows Credential Manager when **Save settings** is pressed and is restored on the next launch.
+In v2.0.3 and newer, OrcaSlicer passes its live API token directly to Matrix Studio when launching it from the menu. On a standalone launch, Matrix Studio first restores a manually saved token from Windows Credential Manager, then falls back to OrcaSlicer's configuration file. The token is shown in the masked API-token field automatically and persists after **Save settings** is pressed.
 
 ### QtCore reports "The specified procedure could not be found"
 
@@ -66,4 +66,4 @@ In Matrix Studio Settings, select the `orca-slicer.exe` from the integrated pack
 
 ## Complete change summary
 
-The token-discovery and persistence fix is documented on the [v2.0.2 release page](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/tag/v2.0.2). The Qt runtime packaging fix is on the [v2.0.1 release page](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/tag/v2.0.1).
+The live-token handoff and corrected credential priority are documented on the [v2.0.3 release page](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/tag/v2.0.3). Earlier fixes are documented on the [v2.0.2 release page](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/tag/v2.0.2) and [v2.0.1 release page](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/tag/v2.0.1).
