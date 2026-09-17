@@ -6,6 +6,15 @@ The bundled native Compare View opens up to 32 stored variants in pages of eight
 
 > Matrix Studio v2 is a clean-break desktop release. The legacy CLI and v1 manifest writer remain temporarily available for scripted compatibility, but new desktop runs use `run.json` schema version 2 and the local run library.
 
+## Download for Windows
+
+Prebuilt Windows x64 packages are available from the [latest GitHub release](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest):
+
+- **OrcaSlicer + Matrix Studio** — recommended; a complete portable OrcaSlicer build with Matrix Studio integrated into the menu.
+- **Matrix Studio standalone** — the companion desktop application only, for use with a compatible Matrix Studio-enabled OrcaSlicer build.
+
+Extract the entire ZIP before running it. No Python environment, compiler, or source build is required.
+
 ## Key Features
 
 - **Modern Qt Desktop UI**: Dark technical-studio design with Build, Active Run, Analyze, Settings, and searchable run-history workspaces.
