@@ -4,12 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orcaslicer-matrix"
-version = "2.0.0"
+version = "2.0.1"
 description = "Modern desktop matrix slicing and comparison studio for OrcaSlicer"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "PySide6>=6.8,<7",
+    # Keep the frozen Windows runtime on the verified Qt 6.8 line. PySide6
+    # 6.11.2 currently produces a PyInstaller bundle that fails to import
+    # QtCore on Windows with ERROR_PROC_NOT_FOUND.
+    "PySide6==6.8.3",
     "httpx>=0.27,<1",
     "keyring>=25,<26",
 ]
