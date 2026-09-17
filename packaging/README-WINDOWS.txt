@@ -1,4 +1,4 @@
-OrcaSlicer Matrix Studio v2.0.1 - Windows x64
+OrcaSlicer Matrix Studio v2.0.2 - Windows x64
 ================================================
 
 These are portable applications. No Python installation or compiler is needed.

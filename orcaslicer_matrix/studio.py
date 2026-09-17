@@ -64,6 +64,7 @@ from .catalog import (
     get_default_catalog,
 )
 from .analytics import compute_matrix_comparison
+from .client import discover_api_token
 from .matrix import VariantLimitExceededError, build_variants
 from .run_bundle import (
     AxisDefinition,
@@ -155,8 +156,14 @@ def _is_local_endpoint(base_url: str) -> bool:
 
 
 def _stored_api_token(base_url: str) -> Optional[str]:
+    # Local OrcaSlicer owns and persists its current token. Prefer that live
+    # value so the Settings field auto-populates and token rotation is picked
+    # up on the next Studio launch. A keyring value remains the fallback for
+    # custom local instances whose configuration cannot be discovered.
     if _is_local_endpoint(base_url):
-        return None
+        discovered = discover_api_token()
+        if discovered:
+            return discovered
     try:
         return keyring.get_password(KEYRING_SERVICE, base_url)
     except KeyringError:
@@ -1937,26 +1944,22 @@ class MatrixStudioWindow(QMainWindow):
             self.viewer_executable_edit.setText(path)
 
     def _save_settings(self) -> None:
-        previous_url = self.base_url
         self.base_url = self.api_url.text().strip().rstrip("/")
         token = self.api_token_edit.text().strip()
         self.api_token = token or None
-        if not _is_local_endpoint(self.base_url):
-            try:
-                if token:
-                    keyring.set_password(KEYRING_SERVICE, self.base_url, token)
-                else:
-                    keyring.delete_password(KEYRING_SERVICE, self.base_url)
-            except PasswordDeleteError:
-                pass
-            except KeyringError as exc:
-                QMessageBox.warning(
-                    self,
-                    "Credential storage unavailable",
-                    f"The API token will be used for this session but could not be stored securely: {exc}",
-                )
-        elif previous_url != self.base_url:
-            self.api_token = None
+        try:
+            if token:
+                keyring.set_password(KEYRING_SERVICE, self.base_url, token)
+            else:
+                keyring.delete_password(KEYRING_SERVICE, self.base_url)
+        except PasswordDeleteError:
+            pass
+        except KeyringError as exc:
+            QMessageBox.warning(
+                self,
+                "Credential storage unavailable",
+                f"The API token will be used for this session but could not be stored securely: {exc}",
+            )
         self.runs_root = Path(self.run_root_edit.text()).expanduser()
         self.store = RunBundleStore(self.runs_root)
         self.settings.setValue("api_url", self.base_url)
@@ -1966,6 +1969,7 @@ class MatrixStudioWindow(QMainWindow):
         self.settings.setValue("soft_limit", self.soft_limit.value())
         self.settings.setValue("require_eta_approval", self.require_eta_approval.isChecked())
         self.settings.setValue("auto_confirm_under_seconds", self.auto_confirm_under.value())
+        self.settings.sync()
         self.refresh_connection()
 
     def _apply_theme(self, theme: str) -> None:

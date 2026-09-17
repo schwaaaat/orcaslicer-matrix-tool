@@ -16,6 +16,7 @@ from orcaslicer_matrix.studio import (
     ResultsChart,
     SortableTableWidgetItem,
     _is_local_endpoint,
+    _stored_api_token,
     generate_bundle_html_report,
     get_favorite_settings,
     is_favorite_setting,
@@ -28,6 +29,7 @@ from orcaslicer_matrix.studio_client import Capabilities
 @pytest.fixture
 def window(qtbot, monkeypatch, tmp_path):
     monkeypatch.setenv("ORCA_MATRIX_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("orcaslicer_matrix.studio._stored_api_token", lambda _url: None)
     monkeypatch.setattr(MatrixStudioWindow, "refresh_connection", lambda self: None)
     widget = MatrixStudioWindow()
     qtbot.addWidget(widget)
@@ -64,6 +66,43 @@ def test_local_endpoint_detection():
     assert _is_local_endpoint("http://localhost:13130")
     assert _is_local_endpoint("http://[::1]:13130")
     assert not _is_local_endpoint("https://slicer.example.test")
+
+
+def test_local_token_prefers_orcaslicer_discovery(monkeypatch):
+    monkeypatch.setattr("orcaslicer_matrix.studio.discover_api_token", lambda: "orca-current-token")
+    monkeypatch.setattr(
+        "orcaslicer_matrix.studio.keyring.get_password",
+        lambda *_args: pytest.fail("keyring fallback should not override the current OrcaSlicer token"),
+    )
+
+    assert _stored_api_token("http://127.0.0.1:13130") == "orca-current-token"
+
+
+def test_local_token_save_survives_studio_relaunch(qtbot, monkeypatch, tmp_path):
+    credentials = {}
+    monkeypatch.setenv("ORCA_MATRIX_DATA_DIR", str(tmp_path))
+    monkeypatch.setattr("orcaslicer_matrix.studio.discover_api_token", lambda: None)
+    monkeypatch.setattr(
+        "orcaslicer_matrix.studio.keyring.set_password",
+        lambda service, account, token: credentials.__setitem__((service, account), token),
+    )
+    monkeypatch.setattr(
+        "orcaslicer_matrix.studio.keyring.get_password",
+        lambda service, account: credentials.get((service, account)),
+    )
+    monkeypatch.setattr(MatrixStudioWindow, "refresh_connection", lambda self: None)
+
+    url = "http://127.0.0.1:13130"
+    first = MatrixStudioWindow(url)
+    qtbot.addWidget(first)
+    first.api_token_edit.setText("saved-local-token")
+    first._save_settings()
+    first.close()
+
+    second = MatrixStudioWindow(url)
+    qtbot.addWidget(second)
+    assert second.api_token == "saved-local-token"
+    assert second.api_token_edit.text() == "saved-local-token"
 
 
 def test_eta_auto_approval_policy(window):

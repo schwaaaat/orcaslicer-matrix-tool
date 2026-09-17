@@ -15,7 +15,7 @@ from .runner import MatrixRunner
 from .run_bundle import AxisDefinition, RunBundle, RunBundleStore, RunLibrary, VariantRecord
 from .schema import SettingsSchema, UnknownSettingError, resolve_matrix_dict, resolve_setting
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 __all__ = [
     "OrcaClient",
     "OrcaError",
