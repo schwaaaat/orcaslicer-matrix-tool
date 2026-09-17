@@ -1,170 +1,167 @@
-# OrcaSlicer Matrix Studio
+<p align="center">
+  <img src="docs/assets/matrix-studio-logo.png" width="230" alt="Matrix Studio logo: a printer nozzle above a phosphor-green data matrix">
+</p>
 
-A Windows-first PySide6 desktop workspace for designing, slicing, and analyzing OrcaSlicer setting matrices. Matrix Studio connects directly to the token-authenticated Remote API built into the companion OrcaSlicer branch, slices the active plate, preserves the original settings, and stores every experiment as a portable v2 run bundle.
+<h1 align="center">OrcaSlicer Matrix Studio</h1>
 
-The bundled native Compare View opens up to 32 stored variants in pages of eight synchronized G-code previews (`orca-slicer.exe --compare run.json`).
+<p align="center">
+  <strong>Turn slicer settings into controlled experiments.</strong><br>
+  Build a matrix, slice every variant, measure the tradeoffs, and inspect the G-code side by side.
+</p>
 
-> Matrix Studio v2 is a clean-break desktop release. The legacy CLI and v1 manifest writer remain temporarily available for scripted compatibility, but new desktop runs use `run.json` schema version 2 and the local run library.
+<p align="center">
+  <a href="https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/schwaaaat/orcaslicer-matrix-tool?display_name=tag&sort=semver&style=for-the-badge&color=19c37d"></a>
+  <a href="https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-111820?style=for-the-badge&logo=windows11&logoColor=39ff88"></a>
+  <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/License-MIT-111820?style=for-the-badge&color=111820"></a>
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-111820?style=for-the-badge&logo=python&logoColor=39ff88">
+</p>
 
-## Download for Windows
-
-Prebuilt Windows x64 packages are available from the [latest GitHub release](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest):
-
-- **OrcaSlicer + Matrix Studio** — recommended; a complete portable OrcaSlicer build with Matrix Studio integrated into the menu.
-- **Matrix Studio standalone** — the companion desktop application only, for use with a compatible Matrix Studio-enabled OrcaSlicer build.
-
-Extract the entire ZIP before running it. No Python environment, compiler, or source build is required.
-
-See the [Windows v2.0.3 release guide](docs/WINDOWS_RELEASE.md) for installation, architecture, the complete change summary, verification details, and troubleshooting.
-
-## Key Features
-
-- **Modern Qt Desktop UI**: Dark technical-studio design with Build, Active Run, Analyze, Settings, and searchable run-history workspaces.
-- **Comprehensive Process Tab Coverage**: Directly mirrors OrcaSlicer's Process tabs (**Quality**, **Strength**, **Speed**, **Support**, **Others**, **Advanced**, plus **Extrusion & Flow** and **Filament & Cooling**), providing rich presets for common tests and searchable access to all 800+ settings from `print_settings_schema.json`.
-- **Max 3 Dimensions Cap**: Restricts simultaneous matrix dimensions to at most 3 (e.g. Axis A, Axis B, Axis C) to prevent combinatorial explosion and keep comparisons meaningful and manageable.
-- **Configurable Matrix Safety**: A warning threshold defaults to 8 variants, with a hard first-release limit of 32. Compare View keeps no more than eight G-code datasets resident at once.
-- **Direct OrcaSlicer Integration**: Uses the custom branch's embedded local API; no MCP process is required. The same API remains compatible with `orcaslicer-mcp` when AI automation is wanted.
-- **Portable Run Library**: Atomic v2 run bundles remain usable when copied, while SQLite supplies fast local search and recent-run history.
-- **Intelligent Setting Key Resolution**: Resolves human-friendly names (e.g., `"layer height"`, `"wall count"`, `"infill density"`) and raw config keys (`layer_height`, `wall_loops`) against `print_settings_schema.json`. Unrecognized settings are cleanly rejected with close match suggestions.
-- **Baseline Wall-Clock Slice Timing & ETA Gate**: Slices the baseline variant first, measures real slicing time with `time.monotonic()`, estimates the remaining matrix, and pauses for approval before proceeding.
-- **Crash-Resilient Config Restoration**: Snapshots every targeted setting, resets to baseline between slices, restores the original values in a `finally` block, and records `recovery_required` in `run.json` if restoration cannot be completed.
-- **Cost Calculation**: Accurately extracts `filament_cost` ($/kg) from the active filament preset and calculates `cost_usd = filament_g * filament_cost / 1000.0`.
-- **Results & Analytics Dashboard**: A results table and print-time chart summarize completed variants, while the run bundle retains computed deltas and G-code filament-by-role data for reporting.
-- **Selective Compare Viewer Integration**: Auto-detects or lets you browse to `orca-slicer.exe`; select up to eight result rows to open directly in synchronized Compare View.
+<p align="center">
+  <a href="https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest"><strong>Download the complete Windows build</strong></a>
+  ·
+  <a href="docs/WINDOWS_RELEASE.md">Installation guide</a>
+  ·
+  <a href="RUN_BUNDLE_SCHEMA.md">Run-bundle format</a>
+</p>
 
 ---
 
-## Quick Start
+Matrix Studio is a Windows-first PySide6 workspace for designing, slicing, and analyzing OrcaSlicer setting matrices. It connects directly to the token-authenticated Remote API in the companion OrcaSlicer branch, preserves the active configuration, and stores each experiment as a portable run bundle.
 
-Create an environment and install the desktop dependencies:
-```bash
+The native Compare View opens up to 32 stored variants in pages of eight synchronized G-code previews, so a setting change can be inspected instead of merely timed.
+
+## One workspace, every permutation
+
+![Matrix Studio matrix builder showing a four-variant layer-height and wall-loop experiment](docs/assets/matrix-builder.png)
+
+Choose one to three axes, use quick presets or any of 800+ indexed settings, and review the complete Cartesian product before a slice begins. The first baseline slice supplies a wall-clock ETA before Matrix Studio continues through the matrix.
+
+## Results you can act on
+
+![Matrix Studio analysis dashboard showing four sample variants, a recommendation, and print-time chart](docs/assets/matrix-analysis.png)
+
+Compare print time, filament, material cost, warnings, and deltas in one table. Export an interactive HTML report or send selected variants directly into OrcaSlicer's synchronized Compare View.
+
+> The screenshots use synthetic sample results and are rendered from the real Matrix Studio widgets.
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    A[Choose 1–3 settings] --> B[Generate variant matrix]
+    B --> C[Snapshot OrcaSlicer config]
+    C --> D[Slice baseline + estimate ETA]
+    D --> E[Slice every variant]
+    E --> F[Restore original config]
+    F --> G[Analyze time · material · cost]
+    G --> H[Open synchronized Compare View]
+
+    style A fill:#10231b,stroke:#39ff88,color:#eafff3
+    style B fill:#10231b,stroke:#39ff88,color:#eafff3
+    style C fill:#111820,stroke:#2b8c62,color:#eafff3
+    style D fill:#111820,stroke:#2b8c62,color:#eafff3
+    style E fill:#111820,stroke:#2b8c62,color:#eafff3
+    style F fill:#111820,stroke:#2b8c62,color:#eafff3
+    style G fill:#10231b,stroke:#39ff88,color:#eafff3
+    style H fill:#10231b,stroke:#39ff88,color:#eafff3
+```
+
+| Build | Measure | Compare |
+|---|---|---|
+| Up to three simultaneous settings | Real slice time, filament, cost, and warnings | Up to eight synchronized previews per page |
+| Quick presets plus 800+ searchable keys | Baseline-relative deltas and recommendations | Portable `run.json` bundles with HTML reports |
+| Hard 32-variant safety cap | Crash-resilient state and restoration records | Searchable local run history |
+
+## Download for Windows
+
+Prebuilt Windows x64 packages are available from the **[latest GitHub release](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest)**. No Python runtime, compiler, or source checkout is required.
+
+- **OrcaSlicer + Matrix Studio** — recommended. The complete portable OrcaSlicer build with Matrix Studio integrated into the menu.
+- **Matrix Studio standalone** — the companion desktop application for an existing compatible Matrix Studio-enabled OrcaSlicer build.
+
+Extract the entire ZIP into a new folder before running it. Keep `tools/OrcaMatrix` beside `orca-slicer.exe`; copying only the executable will break discovery and resources.
+
+See the **[Windows release guide](docs/WINDOWS_RELEASE.md)** for checksums, installation, architecture, troubleshooting, and the complete release history.
+
+## What makes it safe
+
+- **Guaranteed restoration** — targeted settings are snapshotted, reset to baseline between variants, and restored in a `finally` block.
+- **Recovery records** — a failed restoration sets `recovery_required` in `run.json` instead of silently leaving OrcaSlicer modified.
+- **Bounded matrices** — soft warnings default to eight variants and the hard limit is 32.
+- **Secure local authentication** — OrcaSlicer passes its live token through the child environment, never the command line.
+- **Portable results** — atomic v2 run bundles remain useful when copied to another machine; SQLite is only the local search index.
+
+## API-token behavior
+
+For launches from the integrated OrcaSlicer menu, Matrix Studio receives the current in-memory token through `ORCA_API_TOKEN`. For standalone launches it restores the credential from Windows Credential Manager, then uses OrcaSlicer's configuration as a local fallback.
+
+Desktop token priority:
+
+1. Live parent-process `ORCA_API_TOKEN`
+2. Windows Credential Manager
+3. Local OrcaSlicer configuration fallback
+
+The legacy CLI additionally supports `--token`, `.mcp.json`, and environment-driven automation.
+
+## Run from source
+
+Requires Python 3.10 or newer:
+
+```powershell
 python -m venv .venv
 .venv\Scripts\python -m pip install -e ".[dev]"
 .venv\Scripts\python matrix_tool.py
 ```
 
-Enable **Remote API** in the custom OrcaSlicer build, load a model on the plate, and launch Matrix Studio from OrcaSlicer's menu or directly. Build a 1–3 axis matrix, review its variants, and start the run. The baseline slice supplies the remaining-time estimate before the tool continues.
+Enable **Remote API** in the matching OrcaSlicer build, load a model, then launch Matrix Studio from OrcaSlicer's menu or directly.
 
-For development packaging:
+Build the portable Windows application with:
 
 ```powershell
 ./packaging/build_windows.ps1
 ```
 
-The onedir result is written below `packaging/dist/OrcaMatrixStudio` and is intended to be installed beside OrcaSlicer under `tools/OrcaMatrix`.
+The onedir result is written to `packaging/dist/OrcaMatrixStudio` and is designed to live beside OrcaSlicer under `tools/OrcaMatrix`.
 
----
+## Test suite
 
-## Legacy CLI Compatibility
-
-### 1. Slicing with CLI Axis Flags
-Slice a 2x2 matrix (4 variants) using canonical config keys:
-```bash
-python matrix_tool.py -a "layer_height=0.16,0.20" -a "wall_loops=2,3" -o ./compare_output
-```
-
-Using human-readable labels and aliases:
-```bash
-python matrix_tool.py -a "layer height=0.16,0.20" -a "wall count=2,3"
-```
-
-### 2. Slicing with JSON Config File
-Create a JSON configuration file, e.g. `matrix_config.json`:
-```json
-{
-  "layer height": ["0.16", "0.20", "0.24"],
-  "wall count": ["2", "3"]
-}
-```
-Run with:
-```bash
-python matrix_tool.py --config matrix_config.json -o ./my_run
-```
-
-### 3. Non-Interactive / Scripted Mode
-Bypass the ETA confirmation prompt completely:
-```bash
-python matrix_tool.py -a "layer_height=0.16,0.20" -a "wall_loops=2,3" --yes
-```
-
-Or configure custom auto-approval threshold (e.g. skip prompt if total time < 45s):
-```bash
-python matrix_tool.py -a "layer_height=0.16,0.20" -a "wall_loops=2,3" --auto-confirm-under 45
-```
-
-### 4. Dry-Run Validation
-Verify key resolution, permutation planning, plater connection, and snapshot without triggering slices:
-```bash
-python matrix_tool.py -a "layer_height=0.16,0.20" -a "wall_loops=2,3" --dry-run
-```
-
----
-
-## Remote API Configuration
-
-The tool connects to OrcaSlicer's embedded REST API (default: `http://127.0.0.1:13130`).
-
-API token resolution order:
-1. `--token <token>` command-line flag.
-2. `ORCA_API_TOKEN` environment variable.
-3. Automatically discovered from `%APPDATA%\OrcaSlicer\OrcaSlicer.conf` (`remote_api_token`).
-4. Local `.mcp.json` files.
-
----
-
-## Legacy v1 Manifest Structure
-
-Legacy CLI runs output a `manifest.json` file in `<output_dir>` alongside the `.gcode` files. New Matrix Studio runs write the v2 `run.json` bundle documented in `RUN_BUNDLE_SCHEMA.md`.
-
-```json
-{
-  "schema_version": 1,
-  "created_utc": "2026-09-13T05:20:00Z",
-  "source": {
-    "app": "OrcaSlicer",
-    "app_version": "2.4.2",
-    "plate_objects": ["Model.stl"],
-    "print_preset": "0.20mm Standard @BBL X1C",
-    "printer_preset": "Bambu Lab P1S 0.4 nozzle",
-    "filament_preset": "Elegoo PETG Rapid"
-  },
-  "baseline": "layer_height=0.16, wall_loops=2",
-  "matrix": {
-    "layer_height": ["0.16", "0.20"],
-    "wall_loops": ["2", "3"]
-  },
-  "variants": [
-    {
-      "name": "layer_height=0.16, wall_loops=2",
-      "changes": { "layer_height": "0.16", "wall_loops": "2" },
-      "gcode_path": "layer_height_0.16_wall_loops_2.gcode",
-      "stats": {
-        "time_s": 3600.0,
-        "filament_g": 24.5,
-        "cost_usd": 0.49
-      },
-      "warnings": [],
-      "error": null
-    }
-  ]
-}
-```
-
----
-
-## Running the Automated Test Suite
-
-Install the development dependencies and run the complete suite with pytest:
-
-```bash
+```powershell
 python -m pytest -q
 ```
 
-Covers:
-- `test_schema.py`: Setting resolution, human labels, synonyms, typo suggestions.
-- `test_matrix.py`: Cartesian product, slugification, configurable limit enforcement and suggestions.
-- `test_run_bundle.py`: v2 schema round trips, atomic writes, and run-library indexing.
-- `test_studio_client.py`: capabilities negotiation and compatibility rejection.
-- `test_studio_gui.py`: Qt builder layout, axis limits, and live permutation preview.
-- `test_client.py`: Stdlib REST client against mock HTTP server, client-side filtering, 422 retry.
-- `test_runner.py`: End-to-end orchestration, snapshot restoration, wall-clock ETA gate, cost calculation, and schema conformance.
+The suite covers setting resolution, Cartesian-product planning, limit enforcement, portable run bundles, API compatibility, Qt builder behavior, config restoration, baseline ETA gating, cost calculation, and end-to-end orchestration.
+
+## Legacy CLI
+
+<details>
+<summary>Show legacy v1-compatible CLI examples</summary>
+
+Slice a two-axis matrix using canonical OrcaSlicer keys:
+
+```powershell
+python matrix_tool.py -a "layer_height=0.16,0.20" -a "wall_loops=2,3" -o ./compare_output
+```
+
+Human-readable aliases are also resolved:
+
+```powershell
+python matrix_tool.py -a "layer height=0.16,0.20" -a "wall count=2,3"
+```
+
+Use `--yes` for non-interactive runs, `--dry-run` to validate a plan without slicing, or `--config matrix_config.json` to load axes from JSON.
+
+Legacy runs produce `manifest.json`; new desktop runs use the portable v2 `run.json` format documented in [RUN_BUNDLE_SCHEMA.md](RUN_BUNDLE_SCHEMA.md).
+
+</details>
+
+## Project links
+
+- [Latest Windows release](https://github.com/schwaaaat/orcaslicer-matrix-tool/releases/latest)
+- [Matrix Studio-enabled OrcaSlicer source](https://github.com/schwaaaat/OrcaSlicer/tree/matrix-studio-v2.0.3)
+- [Windows installation and troubleshooting](docs/WINDOWS_RELEASE.md)
+- [Compare manifest schema](COMPARE_MANIFEST_SCHEMA.md)
+- [Run bundle schema](RUN_BUNDLE_SCHEMA.md)
+
+## License
+
+Released under the [MIT License](LICENSE).
